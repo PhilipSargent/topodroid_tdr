@@ -24,7 +24,7 @@ and what topodroid does. It builds on understanding of completed similar work wi
 (which is a much cleaner system where vector data is all in JSON, like its centreline data). 
 
 The Troggle code is all available at https://expo.survex.com/repositories/troggle/.git/ under the MIT
-license.
+license. A good starting point which imports all the bits is https://expo.survex.com/repositories/troggle/.git/tree/core/views/topodroid.py .
 
 The Topodroid source has been consulted for inspiration but this has often
 turned out to be misleading, especially when dealing with 10-year old data constructed by old versions.
