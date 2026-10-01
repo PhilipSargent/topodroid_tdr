@@ -49,12 +49,12 @@ def find_first_ascii(r):
     for i in range(r.pos, len(r.data)):
         b = r.data[i]
         if 65 <= b <= 90 or 97 <= b <= 122:
-            print(f"[v6 first ASCII tag] offset={i} byte={chr(b)!r}")
+            print(f"[first ASCII tag] offset={i} byte={chr(b)!r}")
             return
-    print("[v6 first ASCII tag] none found")
+    print("[first ASCII tag] none found")
 
 def debug_first_floats(r, count=10):
-    print("[v6 first floats]")
+    print("[first floats]")
     for i in range(count):
         if r.remaining() < 4:
             print("  <EOF>")
@@ -162,6 +162,20 @@ class Reader:
         
     def read_int_be(self):
         return self.read_int()
+        
+    def read_uint16_be(self):
+        if self.remaining() < 2:
+            raise EOFError("EOF reading uint16_be")
+        v = struct.unpack(">H", self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+        return v
+
+    def read_uint16_le(self):
+        if self.remaining() < 2:
+            raise EOFError("EOF reading uint16_le")
+        v = struct.unpack("<H", self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+        return v
 
     def read_cstring(self, field_name):
         # print(f"\n[{field_name}] ENTER read_cstring: pos={self.pos}")
@@ -219,6 +233,13 @@ class Reader:
         b = self.data[self.pos]
         self.pos += 1
         return b
+        
+    def read_bytes(self, n):
+        if self.remaining() < n:
+            raise EOFError(f"EOF reading {n} bytes")
+        b = self.data[self.pos:self.pos+n]
+        self.pos += n
+        return b
 
     def read_int(self):
         if self.remaining() < 4:
@@ -228,11 +249,19 @@ class Reader:
         return v
         
     def read_float(self):
+        return read_float_be(self)
         if self.remaining() < 4:
             raise EOFError("EOF reading float")
         val = struct.unpack(">f", self.data[self.pos:self.pos+4])[0]
         self.pos += 4
         return val
+        
+    def read_float_be(self):
+        if self.remaining() < 4:
+            raise EOFError("EOF reading float_be")
+        v = struct.unpack(">f", self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return v
 
     def peek_byte(self, offset=0):
         """Return the byte at current position + offset without advancing."""
@@ -348,13 +377,41 @@ def parse_header_v4(r):
     wall  = read_v4_field(r)
     water = read_v4_field(r)
 
+    skip_v4_geometry_blocks(r)
+    print(f"After skipping v4_geometry_blocks  {r.pos=}")
+
     return {
         "layer": layer,
         "wall": wall,
         "water": water,
     }
-    # element stream starts here: r.pos is at first v4 tag
+    
+def skip_v4_geometry_blocks(r):
+    """
+    Skip all hybrid v6-style geometry blocks embedded in v4 TDR files.
+    Each block has the signature:
+      4c 00 04 'w' 'a' 'l' 'l' 00 00 00 00 00 01 <reserved> <len>
+    """
+    data = r.data
+    end = len(data)
 
+    while r.pos + 20 < end:
+        # Look for the block header signature
+        if (data[r.pos]     == 0x4c and        # 'L'
+            data[r.pos+1]   == 0x00 and
+            data[r.pos+2]   == 0x04 and
+            data[r.pos+3:r.pos+7] == b"wall" and
+            data[r.pos+7:r.pos+11] == b"\x00\x00\x00\x00" and
+            data[r.pos+11:r.pos+13] == b"\x00\x01"):
+
+            # Length is BE uint32 at offset 16
+            length = int.from_bytes(data[r.pos+16:r.pos+20], "big")
+
+            # Skip header + payload
+            r.pos += 20 + length
+            continue
+
+        break
 
 def read_v5_field(r):
     r.read_byte()  # swallow leading 0x00 (empty C-string)
@@ -585,6 +642,7 @@ def check_tdr(path):
             "lines": 0,
             "points": 0,
             "areas": 0,
+            "notes": 0,
             "unknown": 0,
             "corrupt_lines_v5": 0,
             "corrupt_points_v5": 0,
@@ -668,29 +726,32 @@ def check_tdr(path):
         # print(f"Schema/flags LE: {schema_flags_le}")
         
         # After reading schema_flags, dump the next 64 bytes
-        print("Header bytes after schema_flags:",
+        print("Header bytes after schema_flags:\n",
             r.data[r.pos:r.pos+64].hex())
 
         major = td_version_major(version)
 
-     
-        head = parse_header(r, header_fmt)                     
-        print(f"{head["layer"]=}\n{head["wall"]=}\n{head["water"]=}")
+
+        head = parse_header(r, header_fmt)  
+        
+        print(f"{head["layer"]=}\n {head["wall"]=}\n{head["water"]=}")
         if "material" in head:
             print(f"{head["material"]=}")
         if "bbox" in head:
             print(f"{head["bbox"]=}")
             
-        print(f"[v6 header end] pos={r.pos}")
-        print(f"[v6 header next 32 bytes] {r.data[r.pos:r.pos+32].hex()}")
+        print(f"[header end] pos={r.pos}")
+        print(f"[header next 32 bytes] {r.data[r.pos:r.pos+32].hex()}")
 
         #print(f"{head["extra1"]=}\n{head["extra2"]=}\n{head["pad"]=}")
        
         debug_first_floats(Reader(data[r.pos:]))  # clone reader so we don't advance
 
         find_first_ascii(r)
-
+        a, b = parse_elements(r, element_fmt, stats)
+        print("TWO ONLY", a, b)
         lines, points, areas, unknown, tag_counts = parse_elements(r, element_fmt, stats)
+        
         # update stats from parse_elements
         stats["lines"]   += lines
         stats["points"]  += points
@@ -712,7 +773,7 @@ def check_tdr(path):
         print(f"  Corrupt v6 Lines:   {stats.get('corrupt_lines_v6', 0)}")
         
     except Exception as e:
-        print(f"ERROR: {version} {e}")
+        print(f"ERROR: {version} {path.name} {e}")
         # raise
 
 

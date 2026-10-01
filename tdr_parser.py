@@ -350,8 +350,9 @@ def parse_elements(r, element_fmt, stats):
 
         return lines, points, areas, unknown, tag_counts
 
-    # --- v4 UTF --------------------------------------------------------------
+    # --- v4     --------------------------------------------------------------
     if element_fmt == "v4":
+        print("DEBUG v4")
         while r.remaining() > 0:
             tag = chr(r.read_byte())
 
@@ -360,6 +361,10 @@ def parse_elements(r, element_fmt, stats):
 
             if tag in ('N','n'):
                 parse_note_v4(r)
+                continue
+
+            if tag in ('T','t'):
+                parse_text_v4(r)
                 continue
 
             if tag in ('L','l'):
@@ -385,6 +390,7 @@ def parse_elements(r, element_fmt, stats):
             stats["unknown"] += 1
 
         return lines, points, areas, unknown, tag_counts
+
 
     # --- v3 LEGACY -----------------------------------------------------------
     if element_fmt == "v3":
@@ -885,30 +891,63 @@ def parse_elements_v3_utf(r):
 
 
 def parse_line_v4(r):
-    line_type = r.read_utf("line_type_v4")
-    group = r.read_utf("group_v4")
-    npts = r.read_int()
+    # v4: type_idx, group_idx, flags
+    type_idx  = r.read_byte()
+    group_idx = r.read_byte()
+    flags     = r.read_byte()
+
+    # number of points (uint16 BE)
+    npts = r.read_uint16_be()
+
     for _ in range(npts):
-        r.read_float()
-        r.read_float()
+        r.read_float_be()
+        r.read_float_be()
+
 
 def parse_point_v4(r):
-    point_type = r.read_utf("point_type_v4")
-    group = r.read_utf("group_v4")
-    r.read_float()
-    r.read_float()
+    type_idx  = r.read_byte()
+    group_idx = r.read_byte()
+    flags     = r.read_byte()
+
+    r.read_float_be()
+    r.read_float_be()
+
 
 def parse_area_v4(r):
-    area_type = r.read_utf("area_type_v4")
-    group = r.read_utf("group_v4")
-    npts = r.read_int()
+    type_idx  = r.read_byte()
+    group_idx = r.read_byte()
+    flags     = r.read_byte()
+
+    npts = r.read_uint16_be()
+
     for _ in range(npts):
-        r.read_float()
-        r.read_float()
+        r.read_float_be()
+        r.read_float_be()
+
 
 def parse_note_v4(r):
-    # placeholder for v4 note handling
-    pass
+    # v4 notes are extremely rare; skip safely
+    type_idx  = r.read_byte()
+    group_idx = r.read_byte()
+    flags     = r.read_byte()
+
+    # read one coordinate pair
+    r.read_float_be()
+    r.read_float_be()
+
+def parse_text_v4(r):
+    type_idx  = r.read_byte()
+    group_idx = r.read_byte()
+    flags     = r.read_byte()
+
+    x = r.read_float_be()
+    y = r.read_float_be()
+
+    length = r.read_byte()
+    text = r.read_bytes(length).decode("utf-8", errors="replace")
+
+    # You can store text if desired
+    # print("TEXT:", text)
 
 
 def debug_v6_before_tag(r, label):
