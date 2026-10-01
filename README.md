@@ -26,12 +26,12 @@ not attempt to cover all Topodroid versions: we are only concerned with our own 
 These are the 133 TDR files in our archive with version number and number of TDR files at that version:
 |Version |No. of files|
 |--------|--------|
-|501040 |13|
 |602012 |2|
 |602011 |2|
+|501040 |13|
+|401092 |9|
 |400020 |3|
 |301040 |104|
-|401092 |9|
 
 (The most recent surveys in 2026 use version 501040 i.e. 5.1.40, because Frank's phone can't upgrade to a more recent version of Topodroid.) 
 This is not the final word on the versions in use as we have some survey trips identified as paperless but where we do not yet
