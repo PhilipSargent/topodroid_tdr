@@ -58,6 +58,22 @@ def read_len_string_ascii(r, label):
     r.pos += length
     return s
 
+def read_len_string_ascii_le(r, label):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading UTF length for {label}")
+    raw_len = r.data[r.pos:r.pos+2]
+    length = struct.unpack("<H", raw_len)[0]   # LITTLE-ENDIAN
+    r.pos += 2
+    if length == 0:
+        return ""
+    if r.remaining() < length:
+        raise ValueError(
+            f"CORRUPT UTF length in {label}: length={length}, remaining={r.remaining()}"
+        )
+    raw = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return raw.decode("utf-8", errors="replace")
+
 def read_int_be(r, label):
     if r.remaining() < 4:
         raise EOFError(f"EOF reading int_be for {label}")
@@ -452,10 +468,10 @@ def parse_geometry_v5(r):
 
 def parse_line_v5_plus(r):
     off = r.pos
-    line_type = read_len_string_ascii(r, "line_type_v5+")
-    line_group = read_len_string_ascii(r, "line_group_v5+")
-    scrap_id = read_int_be(r, "line_scrap_id_v5+")
-    npts = read_short_be(r, "line_npts_v5+")
+    line_type = read_len_string_ascii_le(r, "line_type_v5+")
+    line_group = read_len_string_ascii_le(r, "line_group_v5+")
+    scrap_id = read_int_le(r, "line_scrap_id_v5+")
+    npts = read_short_le(r, "line_npts_v5+")
 
     print(f"[v5+ line] off={off} type={line_type!r} group={line_group!r} "
           f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
@@ -477,9 +493,9 @@ def parse_line_v5_plus(r):
 
 def parse_point_v5_plus(r):
     off = r.pos
-    point_type = read_len_string_ascii(r, "point_type_v5+")
-    point_group = read_len_string_ascii(r, "point_group_v5+")
-    scrap_id = read_int_be(r, "point_scrap_id_v5+")
+    point_type = read_len_string_ascii_le(r, "point_type_v5+")
+    point_group = read_len_string_ascii_le(r, "point_group_v5+")
+    scrap_id = read_int_le(r, "point_scrap_id_v5+")
 
     print(f"[v5+ point] off={off} type={point_type!r} group={point_group!r} "
           f"scrap_id={scrap_id} remaining={r.remaining()}")
@@ -497,10 +513,10 @@ def parse_point_v5_plus(r):
 
 def parse_area_v5_plus(r):
     off = r.pos
-    area_type = read_len_string_ascii(r, "area_type_v5+")
-    area_group = read_len_string_ascii(r, "area_group_v5+")
-    scrap_id = read_int_be(r, "area_scrap_id_v5+")
-    npts = read_short_be(r, "area_npts_v5+")
+    area_type = read_len_string_ascii_le(r, "area_type_v5+")
+    area_group = read_len_string_ascii_le(r, "area_group_v5+")
+    scrap_id = read_int_le(r, "area_scrap_id_v5+")
+    npts = read_short_le(r, "area_npts_v5+")
 
     print(f"[v5+ area] off={off} type={area_type!r} group={area_group!r} "
           f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
@@ -520,21 +536,40 @@ def parse_area_v5_plus(r):
 
     return area_type, area_group, scrap_id, npts
 
+def parse_note_v5_plus(r):
+    off = r.pos
+
+    note_type  = read_len_string_ascii_le(r, "note_type_v5+")
+    note_group = read_len_string_ascii_le(r, "note_group_v5+")
+    note_text  = read_len_string_ascii_le(r, "note_text_v5+")
+
+    if r.remaining() < 8:
+        raise ValueError("CORRUPT v5+ note: missing coordinates")
+
+    x = r.read_float()
+    y = r.read_float()
+
+    print(f"[v5+ note] off={off} type={note_type!r} group={note_group!r} "
+          f"text={note_text!r} x={x} y={y} remaining={r.remaining()}")
+
+    return note_type, note_group, note_text, x, y
+
+
 def parse_elements_v5_plus(r, stats):
     # v6 TDRs are using v5-style element records "v5+", 
     # but with npts stored little‑endian instead of big‑endian! 
     # you couldn't make it up.
     
-    # The V5+ format is
+    # The V5+ format is thought to be (uncertain !):
     # tag → UTF → UTF → scrap_id → npts → floats → BINARY JUNK → next tag
     # The “binary junk” is TopoDroid’s v6 geometry preamble, which v5 never had.
 
     lines = points = areas = unknown = 0
     tag_counts = Counter()
-
+    
+    # 1. After header, there may be a small v6 preamble before the first tag.
+    skip_v6_binary_block(r)
     while r.remaining() > 0:
-        # NEW: skip binary before reading the next tag
-        skip_v6_binary_block(r)
         tag = chr(r.read_byte())
         print(f"[v5+ tag]tag={tag!r} remaining={r.remaining()}")
 
@@ -542,10 +577,17 @@ def parse_elements_v5_plus(r, stats):
             print("[v5+] End tag encountered")
             break
 
-        if tag in ('N', 'n'):
-            # v5-style note: still UTF-only, no geometry
-            parse_note_v5(r)
+        if tag in ('N','n'):
+            try:
+                parse_note_v5_plus(r)
+                stats["notes"] += 1
+            except Exception as e:
+                print(f"[v5+ note ERROR] pos={r.pos} remaining={r.remaining()} error={e!r}")
+                stats["corrupt_notes_v5+"] += 1
+
+            skip_v6_binary_block(r)
             continue
+
 
         if tag in ('L', 'l'):
             try:
@@ -887,7 +929,6 @@ def skip_v6_binary_block(r):
     skipped = r.pos - start
     if skipped:
         print(f"[skip_v6_binary_block] skipped {skipped} bytes, next={chr(r.peek_byte())!r}")
-
 
 def skip_v6_layer_block(r):
     block_len = r.read_int()

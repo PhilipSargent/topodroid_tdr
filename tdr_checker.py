@@ -592,6 +592,8 @@ def check_tdr(path):
             "corrupt_lines_v5+": 0,
             "corrupt_points_v5+": 0,
             "corrupt_areas_v5+": 0,
+            "corrupt_notes_v5+": 0,
+            
         }
         
     # Load manifest
