@@ -4,6 +4,12 @@ from collections import Counter
 
 ASCII_TAGS = set(b"ELPAelpaNn")
 
+def is_compressed_block(r, pos):
+    return (
+        r.data[pos:pos+4] == b"\x00\x00\x00\x00" and
+        r.data[pos+4:pos+8] == b"\x00\x00\x00\x01"
+    )
+
 def dump_bytes(r, start, length=256):
     end = min(start + length, len(r.data))
     chunk = r.data[start:end]
@@ -929,58 +935,57 @@ def skip_binary_geometry(r):
 
         r.read_byte()
 
-def looks_like_v5_element(r, pos):
-    # Must have at least 2 bytes for UTF length
-    if pos + 2 > len(r.data):
+def looks_like_v5_element_at_tag(r, pos):
+    if pos + 1 >= len(r.data):
         return False
 
-    # First UTF length
-    L1 = (r.data[pos] << 8) | r.data[pos+1]
+    tag = r.data[pos]
+    if tag not in (ord('N'), ord('L'), ord('P'), ord('A')):
+        return False
+
+    # First UTF length (type)
+    pos1 = pos + 1
+    if pos1 + 2 > len(r.data):
+        return False
+    L1 = (r.data[pos1] << 8) | r.data[pos1+1]
     if L1 == 0 or L1 > 40:
         return False
-
-    # Must have enough bytes for the string
-    if pos + 2 + L1 > len(r.data):
+    if pos1 + 2 + L1 > len(r.data):
         return False
-
-    # Check that the string is ASCII-ish
-    s1 = r.data[pos+2 : pos+2+L1]
+    s1 = r.data[pos1+2 : pos1+2+L1]
     if any(b < 32 or b > 126 for b in s1):
         return False
 
-    # Second UTF length
-    pos2 = pos + 2 + L1
+    # Second UTF length (group)
+    pos2 = pos1 + 2 + L1
     if pos2 + 2 > len(r.data):
         return False
-
     L2 = (r.data[pos2] << 8) | r.data[pos2+1]
     if L2 == 0 or L2 > 40:
         return False
-
     if pos2 + 2 + L2 > len(r.data):
         return False
-
     s2 = r.data[pos2+2 : pos2+2+L2]
     if any(b < 32 or b > 126 for b in s2):
         return False
 
-    # scrap_id must be 4 bytes BE integer, not float-like
+    # scrap_id sanity
     pos3 = pos2 + 2 + L2
     if pos3 + 4 > len(r.data):
         return False
-
     scrap_id = int.from_bytes(r.data[pos3:pos3+4], "big")
-    if scrap_id > 1000000:   # arbitrary sanity check
+    if scrap_id < 0 or scrap_id > 1_000_000:
         return False
 
     return True
 
-
 def skip_v6_binary_block(r):
-    while r.remaining() >= 2:
-        if looks_like_v5_element(r, r.pos):
+    # Scan forward until we find a plausible v5+ element starting at a tag byte
+    while r.remaining() > 0:
+        if looks_like_v5_element_at_tag(r, r.pos):
             return
         r.pos += 1
+
 
 
 def skip_v6_layer_block(r):
