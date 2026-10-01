@@ -47,6 +47,7 @@ to spit out code fragments.
 
 ### Current status
 At the time of creating this repo on GitHub, the code parses and reads the headers of all files but fails to interpret the 
-geometry features on any except for v3.1.40, and most of the feature tags are not yet identified. For all more recent versions
-the code fails to even parse the floating point numbers in the geometry data.
+geometry features on any except for v3.1.40, and most of the feature tags are not yet identified. Just checking the format 
+of the geometric scraps requires actually parsing them properly. So at this point the project aim is changing from being 
+a format checker to becoming a full parser-converter-SVGexporter. The code architecture is being refactored to match this new direction. 
 
