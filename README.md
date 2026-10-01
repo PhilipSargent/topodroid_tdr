@@ -17,3 +17,16 @@ already a bit of a pig, with 4 different Topodroid database schemas to be used a
 TDR format is an order of magnitude worse: currently we are tracking 7 different binary formats across
 our archive of 133 Topodroid .tdr files in 29 survey wallets from 2016 to 2026
 https://expo.survex.com/paperless#topodroid .
+
+This is not a port or conversion from the Topodroid source code, this is a new implementation working
+directly from hexdumps of the tdr files, inspired by what we generally know about what the files contain 
+and what topodroid does. It builds on understanding of completed similar work with SexyTopo 
+(which is a much cleaner system where vector data is all in JSON, like its centreline data). 
+
+The Troggle code is all available at https://expo.survex.com/repositories/troggle/.git/ under the MIT
+license.
+
+The Topodroid source has been consulted for inspiration but this has often
+turned out to be misleading, especially when dealing with 10-year old data constructed by old versions.
+Gemini and Copilot have been extensively used in chat mode to work with the hexdumps and 
+to spit out code fragments.
