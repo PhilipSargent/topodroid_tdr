@@ -1,5 +1,7 @@
 import math
 import struct
+from collections import Counter
+
 
 def sane_float(f):
     return math.isfinite(f) and -1e6 < f < 1e6
@@ -76,6 +78,134 @@ def dump_context(r, label, window=32):
     raw = r.data[start:end]
     print(f"[{label}] pos={r.pos} remaining={r.remaining()} "
           f"window[{start}:{end}]: {raw.hex()}")
+
+def read_type_string_binary(r):
+    tag = chr(r.read_byte())          # e.g. 'L'
+    hi  = r.read_byte()
+    lo  = r.read_byte()
+    length = (hi << 8) | lo
+    s = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return tag, s.decode("ascii", errors="ignore")
+
+def skip_binary_geometry(r):
+    while r.remaining() > 4:
+        b0 = r.peek_byte(0)
+
+        # Must be ASCII letter
+        if 0x41 <= b0 <= 0x5A or 0x61 <= b0 <= 0x7A:
+            b1 = r.peek_byte(1)
+            b2 = r.peek_byte(2)
+            b3 = r.peek_byte(3)
+
+            # Type string header pattern: <tag> 00 <len_hi> <len_lo>
+            if b1 == 0x00 and (b2 != 0 or b3 != 0):
+                return
+
+        r.read_byte()
+
+
+def parse_elements(r, element_fmt):
+    """
+    Unified element dispatcher.
+    All version-specific parsing is delegated to external functions.
+    """
+    lines = points = areas = unknown = 0
+    tag_counts = Counter()
+
+    # --- v3 UTF --------------------------------------------------------------
+    if element_fmt == "v3_utf":
+        return parse_elements_v3_utf(r)
+
+    # --- v3 BINARY -----------------------------------------------------------
+    if element_fmt == "v3_binary":
+        return parse_elements_v3_binary(r)
+
+    # --- v6 BINARY -----------------------------------------------------------
+    if element_fmt == "v6":
+        while r.remaining() > 0:
+            skip_v6_geometry(r)
+            tag = chr(r.read_byte())
+
+            if tag in ('L','l'):
+                parse_line_v6(r); lines += 1; continue
+            if tag in ('P','p'):
+                parse_point_v6(r); points += 1; continue
+            if tag in ('A','a'):
+                parse_area_v6(r); areas += 1; continue
+
+            tag_counts[tag] += 1
+            unknown += 1
+
+        return lines, points, areas, unknown, tag_counts
+
+    # --- v5 UTF --------------------------------------------------------------
+    if element_fmt == "v5":
+        debug_v5_tags(r, limit=10)
+        while r.remaining() > 0:
+            tag = chr(r.read_byte())
+            print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
+
+            if tag in ('E','e'):
+                print("[v5] End tag encountered")
+                break
+            if tag in ('N','n'):
+                parse_note_v5(r); continue
+            if tag in ('L','l'):
+                parse_line_v5(r); lines += 1; continue
+            if tag in ('P','p'):
+                parse_point_v5(r); points += 1; continue
+            if tag in ('A','a'):
+                parse_area_v5(r); areas += 1; continue
+            tag_counts[tag] += 1
+            unknown += 1
+
+        return lines, points, areas, unknown, tag_counts
+
+    # --- v4 UTF --------------------------------------------------------------
+    if element_fmt == "v4":
+        while r.remaining() > 0:
+            tag = chr(r.read_byte())
+
+            if tag in ('E','e'):
+                break
+            if tag in ('N','n'):
+                parse_note_v4(r); continue
+            if tag in ('L','l'):
+                parse_line_v4(r); lines += 1; continue
+            if tag in ('P','p'):
+                parse_point_v4(r); points += 1; continue
+            if tag in ('A','a'):
+                parse_area_v4(r); areas += 1; continue
+
+            tag_counts[tag] += 1
+            unknown += 1
+
+        return lines, points, areas, unknown, tag_counts
+
+    # --- v3 LEGACY (if ever needed) -----------------------------------------
+    if element_fmt == "v3":
+        while r.remaining() > 0:
+            tag = chr(r.read_byte())
+
+            if tag in ('E','e'):
+                break
+            if tag in ('N','n'):
+                parse_note_v3(r); continue
+            if tag in ('L','l'):
+                parse_line_v3(r); lines += 1; continue
+            if tag in ('P','p'):
+                parse_point_v3(r); points += 1; continue
+            if tag in ('A','a'):
+                parse_area_v3(r); areas += 1; continue
+
+            tag_counts[tag] += 1
+            unknown += 1
+
+        return lines, points, areas, unknown, tag_counts
+
+    # --- Unknown format ------------------------------------------------------
+    raise ValueError(f"Unknown element_fmt {element_fmt}")
 
 
 def debug_v5_tags(r, limit=20):
@@ -249,6 +379,103 @@ def parse_note_v3(r):
     r.read_byte()
 
 
+def parse_line_v3_binary(r):
+    # Skip geometry before type string
+    skip_binary_geometry(r)
+
+    # Read type string (e.g. 'L', 'wall')
+    type_tag, type_name = read_type_string_binary(r)
+
+    # Skip geometry payload after type string
+    skip_binary_geometry(r)
+    
+def parse_point_v3_binary(r):
+    skip_binary_geometry(r)
+    type_tag, type_name = read_type_string_binary(r)
+    skip_binary_geometry(r)
+
+def parse_area_v3_binary(r):
+    skip_binary_geometry(r)
+    type_tag, type_name = read_type_string_binary(r)
+    skip_binary_geometry(r)
+
+def parse_note_v3_binary(r):
+    skip_binary_geometry(r)
+    type_tag, type_name = read_type_string_binary(r)
+    skip_binary_geometry(r)
+
+def parse_elements_v3_binary(r):
+    lines = points = areas = unknown = 0
+    tag_counts = Counter()
+
+    while r.remaining() > 0:
+        skip_binary_geometry(r) 
+        tag = chr(r.read_byte())
+
+        if tag in ('E', 'e'):
+            break
+
+        if tag in ('N', 'n'):
+            parse_note_v3_binary(r)
+            continue
+
+        if tag in ('L', 'l'):
+            parse_line_v3_binary(r)
+            lines += 1
+            continue
+
+        if tag in ('P', 'p'):
+            parse_point_v3_binary(r)
+            points += 1
+            continue
+
+        if tag in ('A', 'a'):
+            parse_area_v3_binary(r)
+            areas += 1
+            continue
+
+        # Unknown tag
+        tag_counts[tag] += 1
+        unknown += 1
+
+    return lines, points, areas, unknown, tag_counts
+
+def parse_elements_v3_utf(r):
+    lines = points = areas = unknown = 0
+    tag_counts = Counter()
+
+    while r.remaining() > 0:
+        tag = chr(r.read_byte())
+
+        if tag in ('E', 'e'):
+            break
+
+        if tag in ('N', 'n'):
+            parse_note_v3(r)
+            continue
+
+        if tag in ('L', 'l'):
+            parse_line_v3(r)
+            lines += 1
+            continue
+
+        if tag in ('P', 'p'):
+            parse_point_v3(r)
+            points += 1
+            continue
+
+        if tag in ('A', 'a'):
+            parse_area_v3(r)
+            areas += 1
+            continue
+
+        # Unknown tag
+        tag_counts[tag] += 1
+        unknown += 1
+
+    return lines, points, areas, unknown, tag_counts
+
+
 def parse_line_v4(r):
     line_type = r.read_utf("line_type_v4")
     group = r.read_utf("group_v4")
@@ -321,15 +548,21 @@ __all__ = [
     "sane_float",
     "looks_like_float",
     "find_bbox_start",
-    "td_version_major",
     "skip_v6_layer_block",
     "dump_context",
+    "parse_elements",
     "debug_v5_tags",
     "debug_scan_v5",
     "parse_line_v3",
     "parse_point_v3",
     "parse_area_v3",
     "parse_note_v3",
+    "parse_line_v3_binary",
+    "parse_point_v3_binary",
+    "parse_area_v3_binary",
+    "parse_note_v3_binary",
+    "parse_elements_v3_binary",
+    "parse_elements_v3_utf",
     "parse_line_v4",
     "parse_point_v4",
     "parse_area_v4",

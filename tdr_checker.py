@@ -10,33 +10,40 @@ FILENUMBER = 0
 versions_dict = defaultdict(int)
 
 from tdr_parser import (
-    dump_context,
-    debug_scan_v5,
-    debug_v5_tags,
-    find_bbox_start,
+    sane_float,
     looks_like_float,
-    parse_area_v3,
-    parse_area_v4,
-    parse_area_v5,
-    parse_area_v6,
-    parse_end_v6,
-    parse_geometry_v5,
+    find_bbox_start,
+    skip_v6_layer_block,
+    dump_context,
+    parse_elements,
+    debug_v5_tags,
+    debug_scan_v5,
     parse_line_v3,
-    parse_line_v4,
-    parse_line_v5,
-    parse_line_v6,
-    parse_note_v3,
-    parse_note_v4,
-    parse_note_v5,
     parse_point_v3,
+    parse_area_v3,
+    parse_note_v3,
+    parse_line_v3_binary,
+    parse_point_v3_binary,
+    parse_area_v3_binary,
+    parse_note_v3_binary,
+    parse_elements_v3_binary,
+    parse_elements_v3_utf,
+    parse_line_v4,
     parse_point_v4,
-    parse_point_v5,
-    parse_point_v6,
+    parse_area_v4,
+    parse_note_v4,
+    parse_geometry_v5,
+    parse_note_v5,
     read_int_be,
     safe_read_utf,
-    sane_float,
+    parse_line_v5,
+    parse_point_v5,
+    parse_area_v5,
     skip_v6_geometry,
-    skip_v6_layer_block,
+    parse_line_v6,
+    parse_point_v6,
+    parse_end_v6,
+    parse_area_v6,
 )
 
 # ------------------------------------------------------------
@@ -271,6 +278,78 @@ def read_len_string(r):
     r.pos += length
     return s.decode("ascii", errors="ignore")
 
+
+def read_v3_field(r):
+    r.read_byte()          # leading 0x00
+    length = r.read_byte() # length
+    s = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return s.decode("ascii", errors="ignore")
+
+def parse_header_v3(r):
+    layer = read_v3_field(r)
+    wall  = read_v3_field(r)
+    water = read_v3_field(r)
+
+    return {
+        "layer": layer,
+        "wall": wall,
+        "water": water,
+    }
+    # v3 elements start at r.pos
+
+
+def read_v4_field(r):
+    r.read_byte()          # leading 0x00
+    length = r.read_byte() # length
+    s = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return s.decode("ascii", errors="ignore")
+
+def parse_header_v4(r):
+    layer = read_v4_field(r)
+    wall  = read_v4_field(r)
+    water = read_v4_field(r)
+
+    return {
+        "layer": layer,
+        "wall": wall,
+        "water": water,
+    }
+    # element stream starts here: r.pos is at first v4 tag
+
+
+def read_v5_field(r):
+    r.read_byte()  # swallow leading 0x00 (empty C-string)
+    length = r.read_byte()
+    s = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return s.decode("ascii", errors="ignore")
+
+def parse_header_v5_len(r):
+    """This format has no materials field and no Bounding Box either
+    """
+    layer = read_v5_field(r)
+    wall  = read_v5_field(r)
+    water = read_v5_field(r)
+    #material = read_v5_field(r)
+
+    # # BBox
+    # raw = r.data[r.pos:r.pos+16]
+    # x1 = struct.unpack(">f", raw[0:4])[0]
+    # y1 = struct.unpack(">f", raw[4:8])[0]
+    # x2 = struct.unpack(">f", raw[8:12])[0]
+    # y2 = struct.unpack(">f", raw[12:16])[0]
+    # r.pos += 16
+
+    return {
+        "layer": layer,
+        "wall": wall,
+        "water": water,
+    }
+
+
+ 
 def parse_header_v6_length(r):
     layer = read_len_string(r)
     wall  = read_len_string(r)
@@ -332,74 +411,6 @@ def parse_header_v6_cstring(r):
         "bbox": (x1, y1, x2, y2),
     }
 
-def read_v5_field(r):
-    r.read_byte()  # swallow leading 0x00 (empty C-string)
-    length = r.read_byte()
-    s = r.data[r.pos:r.pos+length]
-    r.pos += length
-    return s.decode("ascii", errors="ignore")
-
-def parse_header_v5_len(r):
-    """This format has no materials field and no Bounding Box either
-    """
-    layer = read_v5_field(r)
-    wall  = read_v5_field(r)
-    water = read_v5_field(r)
-    #material = read_v5_field(r)
-
-    # # BBox
-    # raw = r.data[r.pos:r.pos+16]
-    # x1 = struct.unpack(">f", raw[0:4])[0]
-    # y1 = struct.unpack(">f", raw[4:8])[0]
-    # x2 = struct.unpack(">f", raw[8:12])[0]
-    # y2 = struct.unpack(">f", raw[12:16])[0]
-    # r.pos += 16
-
-    return {
-        "layer": layer,
-        "wall": wall,
-        "water": water,
-    }
-
-def read_v4_field(r):
-    r.read_byte()          # leading 0x00
-    length = r.read_byte() # length
-    s = r.data[r.pos:r.pos+length]
-    r.pos += length
-    return s.decode("ascii", errors="ignore")
-
-def parse_header_v4(r):
-    layer = read_v4_field(r)
-    wall  = read_v4_field(r)
-    water = read_v4_field(r)
-
-    return {
-        "layer": layer,
-        "wall": wall,
-        "water": water,
-    }
-    # element stream starts here: r.pos is at first v4 tag
-
-def read_v3_field(r):
-    r.read_byte()          # leading 0x00
-    length = r.read_byte() # length
-    s = r.data[r.pos:r.pos+length]
-    r.pos += length
-    return s.decode("ascii", errors="ignore")
-
-def parse_header_v3(r):
-    layer = read_v3_field(r)
-    wall  = read_v3_field(r)
-    water = read_v3_field(r)
-
-    return {
-        "layer": layer,
-        "wall": wall,
-        "water": water,
-    }
-    # v3 elements start at r.pos
-
- 
 def parse_header(r, header_fmt):
     """
     Parse the header according to v3/v4/v5 rules.
@@ -523,211 +534,6 @@ def skip_binary_geometry(r):
                 return
 
         r.read_byte()
-
-
-def parse_line_v3_binary(r):
-    # Skip geometry before type string
-    skip_binary_geometry(r)
-
-    # Read type string (e.g. 'L', 'wall')
-    type_tag, type_name = read_type_string_binary(r)
-
-    # Skip geometry payload after type string
-    skip_binary_geometry(r)
-    
-def parse_point_v3_binary(r):
-    skip_binary_geometry(r)
-    type_tag, type_name = read_type_string_binary(r)
-    skip_binary_geometry(r)
-
-def parse_area_v3_binary(r):
-    skip_binary_geometry(r)
-    type_tag, type_name = read_type_string_binary(r)
-    skip_binary_geometry(r)
-
-def parse_note_v3_binary(r):
-    skip_binary_geometry(r)
-    type_tag, type_name = read_type_string_binary(r)
-    skip_binary_geometry(r)
-
-
-
-
-
-def parse_elements_v3_binary(r):
-    lines = points = areas = unknown = 0
-    tag_counts = Counter()
-
-    while r.remaining() > 0:
-        skip_binary_geometry(r) 
-        tag = chr(r.read_byte())
-
-        if tag in ('E', 'e'):
-            break
-
-        if tag in ('N', 'n'):
-            parse_note_v3_binary(r)
-            continue
-
-        if tag in ('L', 'l'):
-            parse_line_v3_binary(r)
-            lines += 1
-            continue
-
-        if tag in ('P', 'p'):
-            parse_point_v3_binary(r)
-            points += 1
-            continue
-
-        if tag in ('A', 'a'):
-            parse_area_v3_binary(r)
-            areas += 1
-            continue
-
-        # Unknown tag
-        tag_counts[tag] += 1
-        unknown += 1
-
-    return lines, points, areas, unknown, tag_counts
-
-
-def parse_elements_v3_utf(r):
-    lines = points = areas = unknown = 0
-    tag_counts = Counter()
-
-    while r.remaining() > 0:
-        tag = chr(r.read_byte())
-
-        if tag in ('E', 'e'):
-            break
-
-        if tag in ('N', 'n'):
-            parse_note_v3(r)
-            continue
-
-        if tag in ('L', 'l'):
-            parse_line_v3(r)
-            lines += 1
-            continue
-
-        if tag in ('P', 'p'):
-            parse_point_v3(r)
-            points += 1
-            continue
-
-        if tag in ('A', 'a'):
-            parse_area_v3(r)
-            areas += 1
-            continue
-
-        # Unknown tag
-        tag_counts[tag] += 1
-        unknown += 1
-
-    return lines, points, areas, unknown, tag_counts
-
-
-def parse_elements(r, element_fmt):
-    """
-    Unified element dispatcher.
-    All version-specific parsing is delegated to external functions.
-    """
-    lines = points = areas = unknown = 0
-    tag_counts = Counter()
-
-    # --- v3 UTF --------------------------------------------------------------
-    if element_fmt == "v3_utf":
-        return parse_elements_v3_utf(r)
-
-    # --- v3 BINARY -----------------------------------------------------------
-    if element_fmt == "v3_binary":
-        return parse_elements_v3_binary(r)
-
-    # --- v6 BINARY -----------------------------------------------------------
-    if element_fmt == "v6":
-        while r.remaining() > 0:
-            skip_v6_geometry(r)
-            tag = chr(r.read_byte())
-
-            if tag in ('L','l'):
-                parse_line_v6(r); lines += 1; continue
-            if tag in ('P','p'):
-                parse_point_v6(r); points += 1; continue
-            if tag in ('A','a'):
-                parse_area_v6(r); areas += 1; continue
-
-            tag_counts[tag] += 1
-            unknown += 1
-
-        return lines, points, areas, unknown, tag_counts
-
-    # --- v5 UTF --------------------------------------------------------------
-    if element_fmt == "v5":
-        debug_v5_tags(r, limit=10)
-        while r.remaining() > 0:
-            tag = chr(r.read_byte())
-            print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
-
-            if tag in ('E','e'):
-                print("[v5] End tag encountered")
-                break
-            if tag in ('N','n'):
-                parse_note_v5(r); continue
-            if tag in ('L','l'):
-                parse_line_v5(r); lines += 1; continue
-            if tag in ('P','p'):
-                parse_point_v5(r); points += 1; continue
-            if tag in ('A','a'):
-                parse_area_v5(r); areas += 1; continue
-            tag_counts[tag] += 1
-            unknown += 1
-
-        return lines, points, areas, unknown, tag_counts
-
-    # --- v4 UTF --------------------------------------------------------------
-    if element_fmt == "v4":
-        while r.remaining() > 0:
-            tag = chr(r.read_byte())
-
-            if tag in ('E','e'):
-                break
-            if tag in ('N','n'):
-                parse_note_v4(r); continue
-            if tag in ('L','l'):
-                parse_line_v4(r); lines += 1; continue
-            if tag in ('P','p'):
-                parse_point_v4(r); points += 1; continue
-            if tag in ('A','a'):
-                parse_area_v4(r); areas += 1; continue
-
-            tag_counts[tag] += 1
-            unknown += 1
-
-        return lines, points, areas, unknown, tag_counts
-
-    # --- v3 LEGACY (if ever needed) -----------------------------------------
-    if element_fmt == "v3":
-        while r.remaining() > 0:
-            tag = chr(r.read_byte())
-
-            if tag in ('E','e'):
-                break
-            if tag in ('N','n'):
-                parse_note_v3(r); continue
-            if tag in ('L','l'):
-                parse_line_v3(r); lines += 1; continue
-            if tag in ('P','p'):
-                parse_point_v3(r); points += 1; continue
-            if tag in ('A','a'):
-                parse_area_v3(r); areas += 1; continue
-
-            tag_counts[tag] += 1
-            unknown += 1
-
-        return lines, points, areas, unknown, tag_counts
-
-    # --- Unknown format ------------------------------------------------------
-    raise ValueError(f"Unknown element_fmt {element_fmt}")
 
 
 def parse_tdr_file(r):
