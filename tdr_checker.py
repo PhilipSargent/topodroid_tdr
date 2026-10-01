@@ -240,7 +240,7 @@ def dispatch_by_version(version):
         return ("v6_length_header", "v6")
 
     if version == 501040:
-        return ("v5_length_header2", "v5")
+        return ("v5_length_header2", "v6_binary_only")
         
     if version == 401092 or version == 400020 :
         return ("v4_header", "v4")
@@ -510,32 +510,6 @@ def parse_header_old(r, header_fmt):
     
     ###########################################################
     
-def read_type_string_binary(r):
-    tag = chr(r.read_byte())          # e.g. 'L'
-    hi  = r.read_byte()
-    lo  = r.read_byte()
-    length = (hi << 8) | lo
-    s = r.data[r.pos:r.pos+length]
-    r.pos += length
-    return tag, s.decode("ascii", errors="ignore")
-    
-def skip_binary_geometry(r):
-    while r.remaining() > 4:
-        b0 = r.peek_byte(0)
-
-        # Must be ASCII letter
-        if 0x41 <= b0 <= 0x5A or 0x61 <= b0 <= 0x7A:
-            b1 = r.peek_byte(1)
-            b2 = r.peek_byte(2)
-            b3 = r.peek_byte(3)
-
-            # Type string header pattern: <tag> 00 <len_hi> <len_lo>
-            if b1 == 0x00 and (b2 != 0 or b3 != 0):
-                return
-
-        r.read_byte()
-
-
 def parse_tdr_file(r):
     version = read_version(r) # not written yet
 
@@ -557,7 +531,16 @@ def check_tdr(path):
     
     print(f"Size: {len(data)} bytes")
     
-
+    stats = {
+            "lines": 0,
+            "points": 0,
+            "areas": 0,
+            "unknown": 0,
+            "corrupt_lines_v5": 0,
+            "corrupt_points_v5": 0,
+            "corrupt_areas_v5": 0,
+        }
+        
     # Load manifest
     dirpath = path.parent
     manifest_path = dirpath / "manifest"
@@ -648,14 +631,25 @@ def check_tdr(path):
 
         
 
-        lines, points, areas, unknown, tag_counts = parse_elements(r, element_fmt)
+        lines, points, areas, unknown, tag_counts = parse_elements(r, element_fmt, stats)
+        # update stats from parse_elements
+        stats["lines"]   += lines
+        stats["points"]  += points
+        stats["areas"]   += areas
+        stats["unknown"] += unknown
+
+        # print summary
         print("Summary:")
-        print(f"  Lines:   {lines}")
-        print(f"  Points:  {points}")
-        print(f"  Areas:   {areas}")
-        print(f"  Unknown: {unknown}")
+        print(f"  Lines:   {stats['lines']}")
+        print(f"  Points:  {stats['points']}")
+        print(f"  Areas:   {stats['areas']}")
+        print(f"  Unknown: {stats['unknown']}")
+        print(f"Tag histogram: {tag_counts}")
         
-        print("Tag histogram:", tag_counts)
+        print(f"  Corrupt v5 Lines:   {stats['corrupt_lines_v5']}")
+        print(f"  Corrupt v5 Points:  {stats['corrupt_points_v5']}")
+        print(f"  Corrupt v5 Areas:   {stats['corrupt_areas_v5']}")
+        
     except Exception as e:
         print(f"ERROR: {version} {e}")
         # raise

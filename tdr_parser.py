@@ -72,6 +72,50 @@ def safe_read_utf(r, field_name, max_len=256):
     print(f"[{field_name}] value={s!r}")
     return s
 
+def read_utf_strict(r, field_name, max_len=256):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading UTF length for {field_name}")
+
+    raw_len = r.data[r.pos:r.pos+2]
+    length = struct.unpack(">H", raw_len)[0]
+    print(f"[{field_name}] len_bytes={raw_len.hex()} length={length} pos={r.pos}")
+    r.pos += 2
+
+    if length == 0:
+        print(f"[{field_name}] length=0 (empty string)")
+        return ""
+
+    if length > max_len or length > r.remaining():
+        print(f"[{field_name}] CORRUPT: length={length}, remaining={r.remaining()}")
+        # don’t try to decode; treat element as corrupt and bail
+        raise ValueError(f"CORRUPT UTF length in {field_name}")
+
+    raw = r.data[r.pos:r.pos+length]
+    r.pos += length
+
+    try:
+        s = raw.decode("utf-8")
+    except Exception as e:
+        print(f"[{field_name}] CORRUPT UTF: raw={raw.hex()} error={e}")
+        raise
+
+    return s
+
+def looks_like_tag_byte(b):
+    # ASCII letters only for v5 tags: L, P, A, N, E, etc.
+    return 0x41 <= b <= 0x5A  # 'A'..'Z'
+
+def next_tag_pos(r, limit=64):
+    """Scan ahead up to `limit` bytes for the next plausible tag."""
+    start = r.pos
+    for i in range(limit):
+        if r.remaining() <= 0:
+            break
+        b = r.peek_byte(i)
+        if looks_like_tag_byte(b):
+            return start + i, chr(b)
+    return None, None
+
 def dump_context(r, label, window=32):
     start = max(0, r.pos - 16)
     end = min(len(r.data), r.pos + window)
@@ -104,8 +148,18 @@ def skip_binary_geometry(r):
 
         r.read_byte()
 
+def parse_elements_v6_binary_only(r):
+    # Skip all binary geometry until 'E'
+    while r.remaining() > 0:
+        b = r.peek_byte()
+        if b == ord('E'):
+            r.read_byte()
+            break
+        r.read_byte()
 
-def parse_elements(r, element_fmt):
+    return 0, 0, 0, 0, Counter()
+
+def parse_elements(r, element_fmt, stats):
     """
     Unified element dispatcher.
     All version-specific parsing is delegated to external functions.
@@ -121,6 +175,10 @@ def parse_elements(r, element_fmt):
     if element_fmt == "v3_binary":
         return parse_elements_v3_binary(r)
 
+    # --- v6 BINARY ONLY ------------------------------------------------------
+    if element_fmt == "v6_binary_only":
+        return parse_elements_v6_binary_only(r)
+        
     # --- v6 BINARY -----------------------------------------------------------
     if element_fmt == "v6":
         while r.remaining() > 0:
@@ -128,20 +186,33 @@ def parse_elements(r, element_fmt):
             tag = chr(r.read_byte())
 
             if tag in ('L','l'):
-                parse_line_v6(r); lines += 1; continue
+                parse_line_v6(r)
+                lines += 1
+                stats["lines"] += 1
+                continue
+
             if tag in ('P','p'):
-                parse_point_v6(r); points += 1; continue
+                parse_point_v6(r)
+                points += 1
+                stats["points"] += 1
+                continue
+
             if tag in ('A','a'):
-                parse_area_v6(r); areas += 1; continue
+                parse_area_v6(r)
+                areas += 1
+                stats["areas"] += 1
+                continue
 
             tag_counts[tag] += 1
             unknown += 1
+            stats["unknown"] += 1
 
         return lines, points, areas, unknown, tag_counts
 
     # --- v5 UTF --------------------------------------------------------------
     if element_fmt == "v5":
         debug_v5_tags(r, limit=10)
+
         while r.remaining() > 0:
             tag = chr(r.read_byte())
             print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
@@ -149,16 +220,41 @@ def parse_elements(r, element_fmt):
             if tag in ('E','e'):
                 print("[v5] End tag encountered")
                 break
+
             if tag in ('N','n'):
-                parse_note_v5(r); continue
+                parse_note_v5(r)
+                continue
+
             if tag in ('L','l'):
-                parse_line_v5(r); lines += 1; continue
+                try:
+                    parse_line_v5(r)
+                    lines += 1
+                    stats["lines"] += 1
+                except Exception:
+                    stats["corrupt_lines_v5"] += 1
+                continue
+
             if tag in ('P','p'):
-                parse_point_v5(r); points += 1; continue
+                try:
+                    parse_point_v5(r)
+                    points += 1
+                    stats["points"] += 1
+                except Exception:
+                    stats["corrupt_points_v5"] += 1
+                continue
+
             if tag in ('A','a'):
-                parse_area_v5(r); areas += 1; continue
+                try:
+                    parse_area_v5(r)
+                    areas += 1
+                    stats["areas"] += 1
+                except Exception:
+                    stats["corrupt_areas_v5"] += 1
+                continue
+
             tag_counts[tag] += 1
             unknown += 1
+            stats["unknown"] += 1
 
         return lines, points, areas, unknown, tag_counts
 
@@ -169,44 +265,96 @@ def parse_elements(r, element_fmt):
 
             if tag in ('E','e'):
                 break
+
             if tag in ('N','n'):
-                parse_note_v4(r); continue
+                parse_note_v4(r)
+                continue
+
             if tag in ('L','l'):
-                parse_line_v4(r); lines += 1; continue
+                parse_line_v4(r)
+                lines += 1
+                stats["lines"] += 1
+                continue
+
             if tag in ('P','p'):
-                parse_point_v4(r); points += 1; continue
+                parse_point_v4(r)
+                points += 1
+                stats["points"] += 1
+                continue
+
             if tag in ('A','a'):
-                parse_area_v4(r); areas += 1; continue
+                parse_area_v4(r)
+                areas += 1
+                stats["areas"] += 1
+                continue
 
             tag_counts[tag] += 1
             unknown += 1
+            stats["unknown"] += 1
 
         return lines, points, areas, unknown, tag_counts
 
-    # --- v3 LEGACY (if ever needed) -----------------------------------------
+    # --- v3 LEGACY -----------------------------------------------------------
     if element_fmt == "v3":
         while r.remaining() > 0:
             tag = chr(r.read_byte())
 
             if tag in ('E','e'):
                 break
+
             if tag in ('N','n'):
-                parse_note_v3(r); continue
+                parse_note_v3(r)
+                continue
+
             if tag in ('L','l'):
-                parse_line_v3(r); lines += 1; continue
+                parse_line_v3(r)
+                lines += 1
+                stats["lines"] += 1
+                continue
+
             if tag in ('P','p'):
-                parse_point_v3(r); points += 1; continue
+                parse_point_v3(r)
+                points += 1
+                stats["points"] += 1
+                continue
+
             if tag in ('A','a'):
-                parse_area_v3(r); areas += 1; continue
+                parse_area_v3(r)
+                areas += 1
+                stats["areas"] += 1
+                continue
 
             tag_counts[tag] += 1
             unknown += 1
+            stats["unknown"] += 1
 
         return lines, points, areas, unknown, tag_counts
 
     # --- Unknown format ------------------------------------------------------
     raise ValueError(f"Unknown element_fmt {element_fmt}")
 
+
+def skip_corrupt_element_v5(r, label):
+    print(f"[{label}] attempting resync from pos={r.pos}")
+    pos, tag = next_tag_pos(r)
+    if pos is None:
+        print(f"[{label}] no plausible tag found within resync window")
+        r.pos = len(r.data)  # force EOF
+    else:
+        print(f"[{label}] resync to pos={pos} tag={tag!r}")
+        r.pos = pos
+
+def probe_geometry_v5(r, npts, label):
+    if npts <= 0 or r.remaining() < 8:
+        print(f"[{label}] no geometry to probe (npts={npts}, remaining={r.remaining()})")
+        return
+
+    raw = r.data[r.pos:r.pos+8]
+    try:
+        x, y = struct.unpack(">ff", raw)
+        print(f"[{label}] first coords x={x} y={y} raw={raw.hex()}")
+    except Exception as e:
+        print(f"[{label}] INVALID first coords raw={raw.hex()} error={e}")
 
 def debug_v5_tags(r, limit=20):
     print("\n--- DEBUG V5 TAGS ---")
@@ -264,14 +412,17 @@ def parse_line_v5(r):
     tag_pos = off - 1
     dump_context(r, f"v5 line tag at {tag_pos}")
     try:
-        line_type = safe_read_utf(r, "line_type_v5")
-        group = safe_read_utf(r, "group_v5")
+        line_type = read_utf_strict(r, "line_type_v5")
+        group     = read_utf_strict(r, "group_v5")
         if line_type is None or group is None:
             print(f"[v5 line] CORRUPT type/group at off={off}, skipping element")
-            return
+            skip_corrupt_element_v5(r,"[v5 line]")
+            stats["corrupt_lines_v5"] += 1
+            #return
 
         scrap_id = read_int_be(r, "v5 scrap_id")
         npts = read_int_be(r, "v5 npts")
+        probe_geometry_v5(r, npts, "v5 line probe")
 
         print(f"[v5 line] off={off} type={line_type!r} group={group!r} "
               f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
@@ -279,8 +430,9 @@ def parse_line_v5(r):
         expected_bytes = npts * 8
         if npts < 0 or npts > 10000 or r.remaining() < expected_bytes:
             print(f"[v5 line] CORRUPT: npts={npts}, expected_bytes={expected_bytes}, remaining={r.remaining()}")
+            stats["corrupt_lines_v5"] += 1
             return
-
+            
         for i in range(npts):
             if r.remaining() < 8:
                 print(f"[v5 line] EOF risk before point {i}, remaining={r.remaining()}")
@@ -291,6 +443,7 @@ def parse_line_v5(r):
         print(f"[v5 line ERROR] off={off} pos={r.pos} remaining={r.remaining()} "
               f"error={e}")
         dump_context(r, "v5 line ERROR")
+        stats["corrupt_lines_v5"] += 1
         raise
 
 def parse_point_v5(r):
@@ -298,11 +451,13 @@ def parse_point_v5(r):
     tag_pos = off - 1
     dump_context(r, f"v5 point tag at {tag_pos}")
 
-    point_type = safe_read_utf(r, "point_type_v5")
-    group = safe_read_utf(r, "group_v5")
+    point_type = read_utf_strict(r, "point_type_v5")
+    group = read_utf_strict(r, "group_v5")
     if point_type is None or group is None:
         print(f"[v5 point] CORRUPT type/group at off={off}, skipping element")
-        return
+        skip_corrupt_element_v5(r,"[v5 point]")
+        stats["corrupt_points_v5"] += 1
+        #return
 
     scrap_id = read_int_be(r, "v5 scrap_id")
     print(f"[v5 point] off={off} type={point_type!r} group={group!r} "
@@ -310,6 +465,7 @@ def parse_point_v5(r):
 
     if r.remaining() < 8:
         print(f"[v5 point] CORRUPT: not enough bytes for coords, remaining={r.remaining()}")
+        stats["corrupt_points_v5"] += 1
         return
 
     r.read_int()
@@ -321,11 +477,13 @@ def parse_area_v5(r):
     tag_pos = off - 1
     dump_context(r, f"v5 area tag at {tag_pos}")
 
-    area_type = safe_read_utf(r, "area_type_v5")
-    group = safe_read_utf(r, "group_v5")
+    area_type = read_utf_strict(r, "area_type_v5")
+    group = read_utf_strict(r, "group_v5")
     if area_type is None or group is None:
         print(f"[v5 area] CORRUPT type/group at off={off}, skipping element")
-        return
+        skip_corrupt_element_v5(r,"[v5 area]")
+        stats["corrupt_areas_v5"] += 1
+        #return
 
     scrap_id = read_int_be(r, "v5 scrap_id")
     npts = read_int_be(r, "v5 npts")
@@ -336,6 +494,7 @@ def parse_area_v5(r):
     expected_bytes = npts * 8
     if npts < 0 or npts > 10000 or r.remaining() < expected_bytes:
         print(f"[v5 area] CORRUPT: npts={npts}, expected_bytes={expected_bytes}, remaining={r.remaining()}")
+        stats["corrupt_areas_v5"] += 1
         return
 
     for i in range(npts):
