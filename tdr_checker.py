@@ -387,31 +387,32 @@ def parse_header_v4(r):
     }
     
 def skip_v4_geometry_blocks(r):
-    """
-    Skip all hybrid v6-style geometry blocks embedded in v4 TDR files.
-    Each block has the signature:
-      4c 00 04 'w' 'a' 'l' 'l' 00 00 00 00 00 01 <reserved> <len>
-    """
     data = r.data
     end = len(data)
 
-    while r.pos + 20 < end:
-        # Look for the block header signature
-        if (data[r.pos]     == 0x4c and        # 'L'
+    while r.pos + 20 <= end:
+        if (data[r.pos]     == 0x4c and
             data[r.pos+1]   == 0x00 and
             data[r.pos+2]   == 0x04 and
             data[r.pos+3:r.pos+7] == b"wall" and
             data[r.pos+7:r.pos+11] == b"\x00\x00\x00\x00" and
             data[r.pos+11:r.pos+13] == b"\x00\x01"):
 
-            # Length is BE uint32 at offset 16
             length = int.from_bytes(data[r.pos+16:r.pos+20], "big")
+            new_pos = r.pos + 20 + length
 
-            # Skip header + payload
-            r.pos += 20 + length
+            if new_pos > end:
+                # malformed length; stop skipping
+                print(f"[skip] block at {r.pos} len={length} would pass EOF; stopping")
+                r.pos = end
+                break
+
+            print(f"[skip] geometry block at {r.pos}, len={length}, new_pos={new_pos}")
+            r.pos = new_pos
             continue
 
-        break
+        r.pos += 1
+
 
 def read_v5_field(r):
     r.read_byte()  # swallow leading 0x00 (empty C-string)
@@ -748,8 +749,7 @@ def check_tdr(path):
         debug_first_floats(Reader(data[r.pos:]))  # clone reader so we don't advance
 
         find_first_ascii(r)
-        a, b = parse_elements(r, element_fmt, stats)
-        print("TWO ONLY", a, b)
+        
         lines, points, areas, unknown, tag_counts = parse_elements(r, element_fmt, stats)
         
         # update stats from parse_elements

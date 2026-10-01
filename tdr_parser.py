@@ -239,6 +239,8 @@ def parse_elements(r, element_fmt, stats):
     """
     lines = points = areas = unknown = 0
     tag_counts = Counter()
+    if r.remaining() <= 0:
+        return 0, 0, 0, 0, Counter()
 
     # --- v3 UTF --------------------------------------------------------------
     if element_fmt == "v3_utf":
@@ -903,7 +905,6 @@ def parse_line_v4(r):
         r.read_float_be()
         r.read_float_be()
 
-
 def parse_point_v4(r):
     type_idx  = r.read_byte()
     group_idx = r.read_byte()
@@ -911,7 +912,6 @@ def parse_point_v4(r):
 
     r.read_float_be()
     r.read_float_be()
-
 
 def parse_area_v4(r):
     type_idx  = r.read_byte()
