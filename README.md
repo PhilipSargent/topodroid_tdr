@@ -44,3 +44,9 @@ The Topodroid source has been consulted for inspiration but this has often
 turned out to be misleading, especially when dealing with 10-year old data constructed by old versions.
 Gemini and Copilot have been extensively used in chat mode to work with the hexdumps and 
 to spit out code fragments.
+
+### Current status
+At the time of creating this repo on GitHub, the code parses and reads the headers of all files but fails to interpret the 
+geometry features on any except for v3.1.40, and most of the feature tags are not yet identified. For all more recent versions
+the code fails to even parse the floating point numbers in the geometry data.
+
