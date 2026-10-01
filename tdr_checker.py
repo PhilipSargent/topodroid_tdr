@@ -46,6 +46,29 @@ from tdr_parser import (
     parse_area_v6,
 )
 
+def find_first_ascii(r):
+    for i in range(r.pos, len(r.data)):
+        b = r.data[i]
+        if 65 <= b <= 90 or 97 <= b <= 122:
+            print(f"[v6 first ASCII tag] offset={i} byte={chr(b)!r}")
+            return
+    print("[v6 first ASCII tag] none found")
+
+def debug_first_floats(r, count=10):
+    print("[v6 first floats]")
+    for i in range(count):
+        if r.remaining() < 4:
+            print("  <EOF>")
+            return
+        raw = r.data[r.pos:r.pos+4]
+        try:
+            f = struct.unpack(">f", raw)[0]
+            print(f"  {i}: {raw.hex()} -> {f}")
+        except Exception as e:
+            print(f"  {i}: {raw.hex()} INVALID ({e})")
+        r.pos += 4
+
+
 # ------------------------------------------------------------
 # Manifest loader
 # ------------------------------------------------------------
@@ -369,12 +392,19 @@ def parse_header_v6_length(r):
     # BBox
     r.pos = bbox_pos
     
+    raw_bbox = r.data[bbox_pos:bbox_pos+16]
+    print(f"[v6 bbox raw] {raw_bbox.hex()}")
+
+    
     raw = r.data[r.pos:r.pos+16]
     x1 = struct.unpack(">f", raw[0:4])[0]
     y1 = struct.unpack(">f", raw[4:8])[0]
     x2 = struct.unpack(">f", raw[8:12])[0]
     y2 = struct.unpack(">f", raw[12:16])[0]
     r.pos += 16
+    
+    print(f"[v6 material raw] {r.data[start:bbox_pos].hex()}")
+    print(f"[v6 material decoded] {material2!r}")
 
     return {
         "layer": layer,
@@ -394,6 +424,9 @@ def parse_header_v6_cstring(r):
     bbox_pos = find_bbox_start(r)
     material = r.data[r.pos:bbox_pos].decode("ascii", errors="ignore")
     r.pos = bbox_pos
+    
+    raw_bbox = r.data[bbox_pos:bbox_pos+16]
+    print(f"[v6 bbox raw] {raw_bbox.hex()}")
 
     # BBox
     raw = r.data[r.pos:r.pos+16]
@@ -402,6 +435,9 @@ def parse_header_v6_cstring(r):
     x2 = struct.unpack(">f", raw[8:12])[0]
     y2 = struct.unpack(">f", raw[12:16])[0]
     r.pos += 16
+
+    print(f"[v6 material raw] {r.data[r.pos:bbox_pos].hex()}")
+    print(f"[v6 material decoded] {material!r}")
 
     return {
         "layer": layer,
@@ -610,7 +646,7 @@ def check_tdr(path):
         schema_flags_le = struct.unpack("<I", raw_flags)[0]
         r.pos += 4
         print(f"Schema/flags BE: {schema_flags_be}")
-        print(f"Schema/flags LE: {schema_flags_le}")
+        # print(f"Schema/flags LE: {schema_flags_le}")
         
         # After reading schema_flags, dump the next 64 bytes
         print("Header bytes after schema_flags:",
@@ -625,11 +661,15 @@ def check_tdr(path):
             print(f"{head["material"]=}")
         if "bbox" in head:
             print(f"{head["bbox"]=}")
-        
+            
+        print(f"[v6 header end] pos={r.pos}")
+        print(f"[v6 header next 32 bytes] {r.data[r.pos:r.pos+32].hex()}")
+
         #print(f"{head["extra1"]=}\n{head["extra2"]=}\n{head["pad"]=}")
        
+        debug_first_floats(Reader(data[r.pos:]))  # clone reader so we don't advance
 
-        
+        find_first_ascii(r)
 
         lines, points, areas, unknown, tag_counts = parse_elements(r, element_fmt, stats)
         # update stats from parse_elements

@@ -184,7 +184,10 @@ def parse_elements(r, element_fmt, stats):
         while r.remaining() > 0:
             try:
                 before = r.pos
+                print(f"[v6 BEFORE skip] pos={r.pos} next16={r.data[r.pos:r.pos+16].hex()}")
+                before = r.pos
                 skip_v6_geometry(r)
+                print(f"[v6 AFTER skip] {before}->{r.pos} next16={r.data[r.pos:r.pos+16].hex()}")
                 print(f"[v6] skipped geometry bytes: {before} -> {r.pos}, remaining={r.remaining()}")
                 debug_v6_before_tag(r, "v6 tag scan")
 
@@ -663,7 +666,6 @@ def parse_area_v4(r):
 def parse_note_v4(r):
     # placeholder for v4 note handling
     pass
-
 
 def debug_v6_before_tag(r, label):
     off = r.pos
