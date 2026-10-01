@@ -16,7 +16,6 @@ from tdr_parser import (
     skip_v6_layer_block,
     dump_context,
     parse_elements,
-    debug_v5_tags,
     debug_scan_v5,
     parse_line_v3,
     parse_point_v3,
@@ -161,6 +160,9 @@ class Reader:
         self.pos += 4
         return v
         
+    def read_int_be(self):
+        return self.read_int()
+
     def read_cstring(self, field_name):
         # print(f"\n[{field_name}] ENTER read_cstring: pos={self.pos}")
         # print(f"[{field_name}] id(self.data)={id(self.data)} id(self)={id(self)}")
@@ -194,7 +196,19 @@ class Reader:
         except Exception:
             raise ValueError(f"CORRUPT HEADER: invalid C-string in {field_name}")
 
+    def read_short_be(self):
+        if self.remaining() < 2:
+            raise EOFError("EOF reading short_be")
+        v = struct.unpack(">H", self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+        return v
 
+    def read_short_le(self):
+        if self.remaining() < 2:
+            raise EOFError("EOF reading short_le")
+        v = struct.unpack("<H", self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+        return v
 
     def remaining(self):
         return len(self.data) - self.pos
@@ -575,6 +589,9 @@ def check_tdr(path):
             "corrupt_lines_v5": 0,
             "corrupt_points_v5": 0,
             "corrupt_areas_v5": 0,
+            "corrupt_lines_v5+": 0,
+            "corrupt_points_v5+": 0,
+            "corrupt_areas_v5+": 0,
         }
         
     # Load manifest
@@ -582,7 +599,7 @@ def check_tdr(path):
     manifest_path = dirpath / "manifest"
 
     manifest = None
-    if os.path.exists(manifest_path):
+    if manifest_path.is_file():
         try:
             manifest = load_manifest(manifest_path)
             # print("Manifest:")

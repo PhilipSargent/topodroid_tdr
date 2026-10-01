@@ -2,6 +2,77 @@ import math
 import struct
 from collections import Counter
 
+ASCII_TAGS = set(b"ELPAelpaNn")
+
+def read_utf_be(r, label):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading UTF length for {label}")
+    raw_len = r.data[r.pos:r.pos+2]
+    length = struct.unpack(">H", raw_len)[0]
+    r.pos += 2
+    if length == 0:
+        return ""
+    if r.remaining() < length:
+        raise ValueError(f"CORRUPT UTF length in {label}: length={length}, remaining={r.remaining()}")
+    raw = r.data[r.pos:r.pos+length]
+    r.pos += length
+    return raw.decode("utf-8", errors="replace")
+
+def peek_bytes(r, n):
+    return r.data[r.pos:r.pos+n]
+
+def looks_like_ascii_tag(b):
+    return b in ASCII_TAGS
+
+def resync_to_next_tag(r):
+    skip_v6_binary_block(r)
+
+def looks_like_tag_byte(b):
+    # ASCII letters only for v5 tags: L, P, A, N, E, etc.
+    return 0x41 <= b <= 0x5A  # 'A'..'Z'
+
+def next_tag_pos(r, limit=64):
+    """Scan ahead up to `limit` bytes for the next plausible tag."""
+    start = r.pos
+    for i in range(limit):
+        if r.remaining() <= 0:
+            break
+        b = r.peek_byte(i)
+        if looks_like_tag_byte(b):
+            return start + i, chr(b)
+    return None, None
+
+def read_len_string_ascii(r, label):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading length for {label}")
+    raw = r.data[r.pos:r.pos+2]
+    length = struct.unpack(">H", raw)[0]
+    r.pos += 2
+    if length == 0:
+        return ""
+    if r.remaining() < length:
+        raise ValueError(
+            f"CORRUPT UTF length in {label}: length={length}, remaining={r.remaining()}"
+        )
+    s = r.data[r.pos:r.pos+length].decode("utf-8", errors="replace")
+    r.pos += length
+    return s
+
+def read_int_be(r, label):
+    if r.remaining() < 4:
+        raise EOFError(f"EOF reading int_be for {label}")
+    raw = r.data[r.pos:r.pos+4]
+    value = struct.unpack(">I", raw)[0]
+    r.pos += 4
+    return value
+
+def read_short_be(r, label):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading short_be for {label}")
+    raw = r.data[r.pos:r.pos+2]
+    value = struct.unpack(">H", raw)[0]
+    r.pos += 2
+    return value
 
 def sane_float(f):
     return math.isfinite(f) and -1e6 < f < 1e6
@@ -101,21 +172,6 @@ def read_utf_strict(r, field_name, max_len=256):
 
     return s
 
-def looks_like_tag_byte(b):
-    # ASCII letters only for v5 tags: L, P, A, N, E, etc.
-    return 0x41 <= b <= 0x5A  # 'A'..'Z'
-
-def next_tag_pos(r, limit=64):
-    """Scan ahead up to `limit` bytes for the next plausible tag."""
-    start = r.pos
-    for i in range(limit):
-        if r.remaining() <= 0:
-            break
-        b = r.peek_byte(i)
-        if looks_like_tag_byte(b):
-            return start + i, chr(b)
-    return None, None
-
 def dump_context(r, label, window=32):
     start = max(0, r.pos - 16)
     end = min(len(r.data), r.pos + window)
@@ -132,21 +188,6 @@ def read_type_string_binary(r):
     r.pos += length
     return tag, s.decode("ascii", errors="ignore")
 
-def skip_binary_geometry(r):
-    while r.remaining() > 4:
-        b0 = r.peek_byte(0)
-
-        # Must be ASCII letter
-        if 0x41 <= b0 <= 0x5A or 0x61 <= b0 <= 0x7A:
-            b1 = r.peek_byte(1)
-            b2 = r.peek_byte(2)
-            b3 = r.peek_byte(3)
-
-            # Type string header pattern: <tag> 00 <len_hi> <len_lo>
-            if b1 == 0x00 and (b2 != 0 or b3 != 0):
-                return
-
-        r.read_byte()
 
 def parse_elements_v6_binary_only(r):
     # Skip all binary geometry until 'E'
@@ -224,58 +265,14 @@ def parse_elements(r, element_fmt, stats):
                 break
         return lines, points, areas, unknown, tag_counts
         
-    # --- v5 + ----------------------------------------------------------------
+   
+    # --- v5+ hybrid ----------------------------------------------------------
     if element_fmt == "v5+":
-        debug_v5_tags(r, limit=10)
-
-        while r.remaining() > 0:
-            tag = chr(r.read_byte())
-            print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
-
-            if tag in ('E','e'):
-                print("[v5] End tag encountered")
-                break
-
-            if tag in ('N','n'):
-                parse_note_v5(r)
-                continue
-
-            if tag in ('L','l'):
-                try:
-                    parse_line_v5(r)
-                    lines += 1
-                    stats["lines"] += 1
-                except Exception:
-                    stats["corrupt_lines_v5"] += 1
-                continue
-
-            if tag in ('P','p'):
-                try:
-                    parse_point_v5(r)
-                    points += 1
-                    stats["points"] += 1
-                except Exception:
-                    stats["corrupt_points_v5"] += 1
-                continue
-
-            if tag in ('A','a'):
-                try:
-                    parse_area_v5(r)
-                    areas += 1
-                    stats["areas"] += 1
-                except Exception:
-                    stats["corrupt_areas_v5"] += 1
-                continue
-
-            tag_counts[tag] += 1
-            unknown += 1
-            stats["unknown"] += 1
-
-        return lines, points, areas, unknown, tag_counts
+        return parse_elements_v5_plus(r, stats)
+ 
     # --- v5 UTF --------------------------------------------------------------
     if element_fmt == "v5_utf":
-        debug_v5_tags(r, limit=10)
-
+        
         while r.remaining() > 0:
             tag = chr(r.read_byte())
             print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
@@ -419,23 +416,6 @@ def probe_geometry_v5(r, npts, label):
     except Exception as e:
         print(f"[{label}] INVALID first coords raw={raw.hex()} error={e}")
 
-def debug_v5_tags(r, limit=20):
-    print("\n--- DEBUG V5 TAGS ---")
-    start_pos = r.pos
-    count = 0
-
-    while r.remaining() > 0 and count < limit:
-        off = r.pos
-        b = r.read_byte()
-        ch = chr(b) if 32 <= b <= 126 else '.'
-        print(f"offset {off:06d}: tag byte=0x{b:02x} '{ch}'")
-        raw = r.data[r.pos:r.pos+16]
-        print(f"    next 16 bytes: {raw.hex()}")
-        count += 1
-
-    print(f"--- END DEBUG V5 TAGS (scanned {count} tags) ---")
-    r.pos = start_pos
-
 def debug_scan_v5(r, limit=200):
     print("\n--- DEBUG SCAN V5 GEOMETRY ---")
     count = 0
@@ -470,6 +450,144 @@ def parse_geometry_v5(r):
         coords += 1
     return coords
 
+def parse_line_v5_plus(r):
+    off = r.pos
+    line_type = read_len_string_ascii(r, "line_type_v5+")
+    line_group = read_len_string_ascii(r, "line_group_v5+")
+    scrap_id = read_int_be(r, "line_scrap_id_v5+")
+    npts = read_short_be(r, "line_npts_v5+")
+
+    print(f"[v5+ line] off={off} type={line_type!r} group={line_group!r} "
+          f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
+
+    expected_bytes = npts * 2 * 4  # x,y as 32-bit floats
+    if r.remaining() < expected_bytes:
+        raise ValueError(
+            f"CORRUPT v5+ line: npts={npts}, expected_bytes={expected_bytes}, "
+            f"remaining={r.remaining()}"
+        )
+
+    for i in range(npts):
+        x = r.read_float()
+        y = r.read_float()
+        if i < 3:
+            print(f"[v5+ line coord {i}] x={x} y={y}")
+
+    return line_type, line_group, scrap_id, npts
+
+def parse_point_v5_plus(r):
+    off = r.pos
+    point_type = read_len_string_ascii(r, "point_type_v5+")
+    point_group = read_len_string_ascii(r, "point_group_v5+")
+    scrap_id = read_int_be(r, "point_scrap_id_v5+")
+
+    print(f"[v5+ point] off={off} type={point_type!r} group={point_group!r} "
+          f"scrap_id={scrap_id} remaining={r.remaining()}")
+
+    if r.remaining() < 8:
+        raise ValueError(
+            f"CORRUPT v5+ point: remaining={r.remaining()} < 8 for coords"
+        )
+
+    x = r.read_float()
+    y = r.read_float()
+    print(f"[v5+ point coord] x={x} y={y}")
+
+    return point_type, point_group, scrap_id
+
+def parse_area_v5_plus(r):
+    off = r.pos
+    area_type = read_len_string_ascii(r, "area_type_v5+")
+    area_group = read_len_string_ascii(r, "area_group_v5+")
+    scrap_id = read_int_be(r, "area_scrap_id_v5+")
+    npts = read_short_be(r, "area_npts_v5+")
+
+    print(f"[v5+ area] off={off} type={area_type!r} group={area_group!r} "
+          f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
+
+    expected_bytes = npts * 2 * 4
+    if r.remaining() < expected_bytes:
+        raise ValueError(
+            f"CORRUPT v5+ area: npts={npts}, expected_bytes={expected_bytes}, "
+            f"remaining={r.remaining()}"
+        )
+
+    for i in range(npts):
+        x = r.read_float()
+        y = r.read_float()
+        if i < 3:
+            print(f"[v5+ area coord {i}] x={x} y={y}")
+
+    return area_type, area_group, scrap_id, npts
+
+def parse_elements_v5_plus(r, stats):
+    # v6 TDRs are using v5-style element records "v5+", 
+    # but with npts stored little‑endian instead of big‑endian! 
+    # you couldn't make it up.
+    
+    # The V5+ format is
+    # tag → UTF → UTF → scrap_id → npts → floats → BINARY JUNK → next tag
+    # The “binary junk” is TopoDroid’s v6 geometry preamble, which v5 never had.
+
+    lines = points = areas = unknown = 0
+    tag_counts = Counter()
+
+    while r.remaining() > 0:
+        # NEW: skip binary before reading the next tag
+        skip_v6_binary_block(r)
+        tag = chr(r.read_byte())
+        print(f"[v5+ tag]tag={tag!r} remaining={r.remaining()}")
+
+        if tag in ('E', 'e'):
+            print("[v5+] End tag encountered")
+            break
+
+        if tag in ('N', 'n'):
+            # v5-style note: still UTF-only, no geometry
+            parse_note_v5(r)
+            continue
+
+        if tag in ('L', 'l'):
+            try:
+                parse_line_v5_plus(r)
+                lines += 1
+                stats["lines"] += 1
+            except Exception as e:
+                print(f"[v5+ line ERROR] pos={r.pos} remaining={r.remaining()} error={e!r}")
+                stats["corrupt_lines_v5+"] += 1
+            skip_v6_binary_block(r)
+            continue
+
+        if tag in ('P', 'p'):
+            try:
+                parse_point_v5_plus(r)
+                points += 1
+                stats["points"] += 1
+            except Exception as e:
+                print(f"[v5+ point ERROR] pos={r.pos} remaining={r.remaining()} error={e!r}")
+                stats["corrupt_points_v5+"] += 1
+            skip_v6_binary_block(r)
+            continue
+
+        if tag in ('A', 'a'):
+            try:
+                parse_area_v5_plus(r)
+                areas += 1
+                stats["areas"] += 1
+            except Exception as e:
+                print(f"[v5+ area ERROR] pos={r.pos} remaining={r.remaining()} error={e!r}")
+                stats["corrupt_areas_v5+"] += 1
+            skip_v6_binary_block(r)
+            continue
+
+        # Unknown / binary / padding
+        tag_counts[tag] += 1
+        unknown += 1
+        stats["unknown"] += 1
+
+    return lines, points, areas, unknown, tag_counts
+        
+        
 def parse_line_v5(r):
     off = r.pos
     tag_pos = off - 1
@@ -724,12 +842,52 @@ def parse_note_v4(r):
     # placeholder for v4 note handling
     pass
 
+
 def debug_v6_before_tag(r, label):
     off = r.pos
     # show a small window around current pos
     window = r.data[off:off+32]
     print(f"[{label}] pos={off} remaining={r.remaining()} "
           f"next32={window.hex()}")
+
+
+def skip_binary_geometry(r):
+    while r.remaining() > 4:
+        b0 = r.peek_byte(0)
+
+        # Must be ASCII letter
+        if 0x41 <= b0 <= 0x5A or 0x61 <= b0 <= 0x7A:
+            b1 = r.peek_byte(1)
+            b2 = r.peek_byte(2)
+            b3 = r.peek_byte(3)
+
+            # Type string header pattern: <tag> 00 <len_hi> <len_lo>
+            if b1 == 0x00 and (b2 != 0 or b3 != 0):
+                return
+
+        r.read_byte()
+
+
+V5_TAGS = set("NnLlPpAaEe")
+
+def skip_v6_binary_block(r):
+    """
+    After a v5+ element's floats, v6 writes a binary geometry block.
+    We need to skip bytes until we reach the next ASCII tag
+    (N/L/P/A/E, upper or lower case).
+    """
+    start = r.pos
+    while r.remaining() > 0:
+        b = r.peek_byte()
+        ch = chr(b)
+        # stop when we hit a plausible tag byte
+        if 32 <= b <= 126 and ch in V5_TAGS:
+            break
+        r.read_byte()
+    skipped = r.pos - start
+    if skipped:
+        print(f"[skip_v6_binary_block] skipped {skipped} bytes, next={chr(r.peek_byte())!r}")
+
 
 def skip_v6_layer_block(r):
     block_len = r.read_int()
@@ -826,7 +984,6 @@ __all__ = [
     "skip_v6_layer_block",
     "dump_context",
     "parse_elements",
-    "debug_v5_tags",
     "debug_scan_v5",
     "parse_line_v3",
     "parse_point_v3",
