@@ -1,0 +1,7 @@
+[project]
+name = "topodroid-tdr"
+version = "0.1.0"
+description = "Validsating format of historic Topodroid TDR files"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []

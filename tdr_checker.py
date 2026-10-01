@@ -37,13 +37,31 @@ from tdr_parser import (
     sane_float,
     skip_v6_geometry,
     skip_v6_layer_block,
-    td_version_major,
 )
 
 # ------------------------------------------------------------
 # Manifest loader
 # ------------------------------------------------------------
 def td_version_to_int(ver: str) -> int:
+    """
+    Expected format:
+    5.1.40 501040
+    43
+    gruffalo_ninky_knonk
+    2025.09.01
+    
+    or
+    3.1.4
+    27
+    101_real
+    2016.06.26
+    
+    or
+    3.1.4a
+    27
+    101_real
+    2016.06.26
+    """
     # "5.1.40" -> 5, 1, 40 -> "5" + "01" + "040" -> 501040
     parts = ver.split(".")
     if len(parts) != 3:
@@ -55,23 +73,9 @@ def td_version_to_int(ver: str) -> int:
 
     return int(f"{major}{minor:02d}{patch:03d}")
     
-    # Expected format:
-    # 5.1.40 501040
-    # 43
-    # gruffalo_ninky_knonk
-    # 2025.09.01
-    
-    # or
-    # 3.1.4
-    # 27
-    # 101_real
-    # 2016.06.26
-    
-    # or
-    # 3.1.4a
-    # 27
-    # 101_real
-    # 2016.06.26
+def td_version_major(version_int):
+    # 501040 -> 5, 301040 -> 3, 602012 -> 6
+    return version_int // 100000
 
 def load_manifest(path: Path):
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]

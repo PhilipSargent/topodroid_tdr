@@ -1,11 +1,6 @@
 import math
 import struct
 
-
-def td_version_major(version_int):
-    # 501040 -> 5, 301040 -> 3, 602012 -> 6
-    return version_int // 100000
-
 def sane_float(f):
     return math.isfinite(f) and -1e6 < f < 1e6
 
