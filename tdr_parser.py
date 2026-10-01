@@ -223,9 +223,57 @@ def parse_elements(r, element_fmt, stats):
                       f"last_tag={tag!r} error={e}")
                 break
         return lines, points, areas, unknown, tag_counts
+        
+    # --- v5 + ----------------------------------------------------------------
+    if element_fmt == "v5+":
+        debug_v5_tags(r, limit=10)
 
+        while r.remaining() > 0:
+            tag = chr(r.read_byte())
+            print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
+
+            if tag in ('E','e'):
+                print("[v5] End tag encountered")
+                break
+
+            if tag in ('N','n'):
+                parse_note_v5(r)
+                continue
+
+            if tag in ('L','l'):
+                try:
+                    parse_line_v5(r)
+                    lines += 1
+                    stats["lines"] += 1
+                except Exception:
+                    stats["corrupt_lines_v5"] += 1
+                continue
+
+            if tag in ('P','p'):
+                try:
+                    parse_point_v5(r)
+                    points += 1
+                    stats["points"] += 1
+                except Exception:
+                    stats["corrupt_points_v5"] += 1
+                continue
+
+            if tag in ('A','a'):
+                try:
+                    parse_area_v5(r)
+                    areas += 1
+                    stats["areas"] += 1
+                except Exception:
+                    stats["corrupt_areas_v5"] += 1
+                continue
+
+            tag_counts[tag] += 1
+            unknown += 1
+            stats["unknown"] += 1
+
+        return lines, points, areas, unknown, tag_counts
     # --- v5 UTF --------------------------------------------------------------
-    if element_fmt == "v5":
+    if element_fmt == "v5_utf":
         debug_v5_tags(r, limit=10)
 
         while r.remaining() > 0:

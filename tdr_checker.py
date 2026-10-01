@@ -257,10 +257,10 @@ class Reader:
 # ------------------------------------------------------------
 def dispatch_by_version(version):
     if version == 602012:
-        return ("v6_cstring_header", "v5")
+        return ("v6_cstring_header", "v5+")
 
     if version == 602011:
-        return ("v6_length_header", "v5")
+        return ("v6_length_header", "v5+")
 
     if version == 501040:
         return ("v5_length_header2", "v6_binary_only")
