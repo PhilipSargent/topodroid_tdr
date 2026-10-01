@@ -220,6 +220,56 @@ def read_type_string_binary(r):
     r.pos += length
     return tag, s.decode("ascii", errors="ignore")
 
+def parse_elements_sgp(r, stats):
+    """
+    Parse Scrap Geometry Packets (SGP).
+    These appear in versions 400020, 401092, 501040.
+    They contain binary geometry + text labels, not v4/v5/v6 tags.
+    """
+    packets = 0
+    texts = 0
+
+    while r.remaining() > 20:
+        # detect packet header
+        if (r.peek_byte() == 0x4c and
+            r.data[r.pos+1] == 0x00 and
+            r.data[r.pos+2] == 0x04 and
+            r.data[r.pos+3:r.pos+7] == b"wall"):
+
+            # read header
+            r.pos += 16
+            length = int.from_bytes(r.read_bytes(4), "big")
+
+            payload_start = r.pos
+            payload_end   = r.pos + length
+
+            packets += 1
+
+            # scan payload for text records
+            i = payload_start
+            while i + 10 < payload_end:
+                if r.data[i] == 0x54:  # 'T'
+                    # text record found
+                    x = struct.unpack(">f", r.data[i+1:i+5])[0]
+                    y = struct.unpack(">f", r.data[i+5:i+9])[0]
+                    ln = r.data[i+9]
+                    txt = r.data[i+10:i+10+ln].decode("utf-8", "replace")
+                    print("SGP TEXT:", txt)
+                    texts += 1
+                    i += 10 + ln
+                else:
+                    i += 1
+
+            r.pos = payload_end
+            continue
+
+        # no more packets
+        break
+
+    stats["sgp_packets"] = packets
+    stats["sgp_texts"] = texts
+    return 0, 0, 0, 0, Counter()
+
 
 def parse_elements_v6_binary_only(r):
     # Skip all binary geometry until 'E'
@@ -249,6 +299,10 @@ def parse_elements(r, element_fmt, stats):
     # --- v3 BINARY -----------------------------------------------------------
     if element_fmt == "v3_binary":
         return parse_elements_v3_binary(r)
+        
+    # --- SGP   --------------------------------------------------------------
+    if element_fmt == "sgp":
+        return parse_elements_sgp(r, stats)
 
     # --- v6 BINARY ONLY ------------------------------------------------------
     if element_fmt == "v6_binary_only":
@@ -352,7 +406,7 @@ def parse_elements(r, element_fmt, stats):
 
         return lines, points, areas, unknown, tag_counts
 
-    # --- v4     --------------------------------------------------------------
+    # --- v4  LEGASY----------------------------------------------------------
     if element_fmt == "v4":
         print("DEBUG v4")
         while r.remaining() > 0:
