@@ -182,31 +182,34 @@ def parse_elements(r, element_fmt, stats):
     # --- v6 BINARY -----------------------------------------------------------
     if element_fmt == "v6":
         while r.remaining() > 0:
-            skip_v6_geometry(r)
-            tag = chr(r.read_byte())
+            try:
+                before = r.pos
+                skip_v6_geometry(r)
+                print(f"[v6] skipped geometry bytes: {before} -> {r.pos}, remaining={r.remaining()}")
+                debug_v6_before_tag(r, "v6 tag scan")
 
-            if tag in ('L','l'):
-                parse_line_v6(r)
-                lines += 1
-                stats["lines"] += 1
-                continue
+                tag_pos = r.pos
+                tag = chr(r.read_byte())
+                print(f"[v6 tag] tag={tag!r} tag_pos={tag_pos} remaining={r.remaining()}")
 
-            if tag in ('P','p'):
-                parse_point_v6(r)
-                points += 1
-                stats["points"] += 1
-                continue
+                if tag in ('L','l'):
+                    parse_line_v6(r)
+                    lines += 1; stats["lines"] += 1; continue
+                if tag in ('P','p'):
+                    parse_point_v6(r)
+                    points += 1; stats["points"] += 1; continue
+                if tag in ('A','a'):
+                    parse_area_v6(r)
+                    areas += 1; stats["areas"] += 1; continue
 
-            if tag in ('A','a'):
-                parse_area_v6(r)
-                areas += 1
-                stats["areas"] += 1
-                continue
+                tag_counts[tag] += 1
+                unknown += 1
+                stats["unknown"] += 1
 
-            tag_counts[tag] += 1
-            unknown += 1
-            stats["unknown"] += 1
-
+            except EOFError as e:
+                print(f"[v6 ERROR] EOF at pos={r.pos} remaining={r.remaining()} "
+                      f"last_tag={tag!r} error={e}")
+                break
         return lines, points, areas, unknown, tag_counts
 
     # --- v5 UTF --------------------------------------------------------------
@@ -662,6 +665,13 @@ def parse_note_v4(r):
     pass
 
 
+def debug_v6_before_tag(r, label):
+    off = r.pos
+    # show a small window around current pos
+    window = r.data[off:off+32]
+    print(f"[{label}] pos={off} remaining={r.remaining()} "
+          f"next32={window.hex()}")
+
 def skip_v6_layer_block(r):
     block_len = r.read_int()
     r.pos += block_len
@@ -674,35 +684,72 @@ def skip_v6_geometry(r):
         r.read_byte()
 
 def parse_line_v6(r):
+    start = r.pos - 1  # L was just read
     type_code = r.read_byte()
     group_code = r.read_byte()
+
     if r.remaining() < 2:
         raise EOFError("EOF reading npts_v6")
-    npts = struct.unpack(">H", r.data[r.pos:r.pos+2])[0]
+
+    raw_npts = r.data[r.pos:r.pos+2]
+    npts = struct.unpack(">H", raw_npts)[0]
     r.pos += 2
-    for _ in range(npts):
-        r.read_float()
-        r.read_float()
+
+    print(f"[v6 line] start={start} type_code={type_code} group_code={group_code} "
+          f"npts={npts} remaining={r.remaining()} raw_npts={raw_npts.hex()}")
+
+    expected_bytes = npts * 8
+    if r.remaining() < expected_bytes:
+        print(f"[v6 line] CORRUPT? npts={npts} expected_bytes={expected_bytes} "
+              f"remaining={r.remaining()}")
+
+    for i in range(npts):
+        if r.remaining() < 8:
+            print(f"[v6 line] EOF risk before point {i}, remaining={r.remaining()}")
+            break
+        x = r.read_float()
+        y = r.read_float()
+
 
 def parse_point_v6(r):
+    start = r.pos - 1
     type_code = r.read_byte()
     group_code = r.read_byte()
+    print(f"[v6 point] start={start} type_code={type_code} group_code={group_code} "
+          f"remaining={r.remaining()}")
     r.read_float()
     r.read_float()
 
 def parse_area_v6(r):
+    start = r.pos - 1
     type_code = r.read_byte()
     group_code = r.read_byte()
+
     if r.remaining() < 2:
         raise EOFError("EOF reading npts_v6")
-    npts = struct.unpack(">H", r.data[r.pos:r.pos+2])[0]
+
+    raw_npts = r.data[r.pos:r.pos+2]
+    npts = struct.unpack(">H", raw_npts)[0]
     r.pos += 2
-    for _ in range(npts):
-        r.read_float()
-        r.read_float()
+
+    print(f"[v6 area] start={start} type_code={type_code} group_code={group_code} "
+          f"npts={npts} remaining={r.remaining()} raw_npts={raw_npts.hex()}")
+
+    expected_bytes = npts * 8
+    if r.remaining() < expected_bytes:
+        print(f"[v6 area] CORRUPT? npts={npts} expected_bytes={expected_bytes} "
+              f"remaining={r.remaining()}")
+
+    for i in range(npts):
+        if r.remaining() < 8:
+            print(f"[v6 area] EOF risk before point {i}, remaining={r.remaining()}")
+            break
+        x = r.read_float()
+        y = r.read_float()
 
 def parse_end_v6(r):
     return
+
 __all__ = [
     "sane_float",
     "looks_like_float",
