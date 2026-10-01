@@ -406,7 +406,7 @@ def parse_elements(r, element_fmt, stats):
 
         return lines, points, areas, unknown, tag_counts
 
-    # --- v4  LEGASY----------------------------------------------------------
+    # --- v4  LEGACY----------------------------------------------------------
     if element_fmt == "v4":
         print("DEBUG v4")
         while r.remaining() > 0:
