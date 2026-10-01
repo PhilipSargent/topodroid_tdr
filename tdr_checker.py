@@ -47,6 +47,33 @@ def skip_v6_layer_block(r):
     block_len = r.read_int()      # length of binary layer block
     r.pos += block_len            # skip it
 
+def dump_context(r, label, window=32):
+    start = max(0, r.pos - 16)
+    end = min(len(r.data), r.pos + window)
+    raw = r.data[start:end]
+    print(f"[{label}] pos={r.pos} remaining={r.remaining()} "
+          f"window[{start}:{end}]: {raw.hex()}")
+
+
+def debug_v5_tags(r, limit=20):
+    print("\n--- DEBUG V5 TAGS ---")
+    start_pos = r.pos
+    count = 0
+
+    while r.remaining() > 0 and count < limit:
+        off = r.pos
+        b = r.read_byte()
+        ch = chr(b) if 32 <= b <= 126 else '.'
+        print(f"offset {off:06d}: tag byte=0x{b:02x} '{ch}'")
+
+        # Peek next few bytes as raw
+        raw = r.data[r.pos:r.pos+16]
+        print(f"    next 16 bytes: {raw.hex()}")
+
+        count += 1
+
+    print(f"--- END DEBUG V5 TAGS (scanned {count} tags) ---")
+    r.pos = start_pos  # restore
 
 
 def debug_scan_v5(r, limit=200):
@@ -130,7 +157,10 @@ def parse_area_v4(r):
     for _ in range(npts):
         r.read_float()
         r.read_float()
-
+        
+def parse_note_v4(r):
+    read_utf_string(r)
+    
 def parse_geometry_v5(r):
     # v5 geometry = pure float32 coordinate pairs
     coords = 0
@@ -146,33 +176,152 @@ def parse_note_v5(r):
     r.read_byte()
     r.read_byte()
 
+def read_int_be(r, label):
+    if r.remaining() < 4:
+        raise EOFError(f"EOF reading {label}")
+    raw = r.data[r.pos:r.pos+4]
+    v = struct.unpack(">i", raw)[0]
+    print(f"[{label}] raw={raw.hex()} value={v}")
+    r.pos += 4
+    return v
+    
+def safe_read_utf(r, field_name, max_len=256):
+    if r.remaining() < 2:
+        raise EOFError(f"EOF reading UTF length for {field_name}")
+
+    raw_len = r.data[r.pos:r.pos+2]
+    length = struct.unpack(">H", raw_len)[0]
+    print(f"[{field_name}] len_bytes={raw_len.hex()} length={length} pos={r.pos}")
+
+    if length == 0 or length > max_len or length > r.remaining() - 2:
+        print(f"[{field_name}] CORRUPT: length={length}, remaining={r.remaining()}")
+        # classify as corrupt element and bail
+        return None
+
+    r.pos += 2
+
+    if r.remaining() < length:
+        raise EOFError(f"EOF reading UTF bytes for {field_name}")
+
+    raw = r.data[r.pos:r.pos+length]
+    r.pos += length
+
+    try:
+        s = raw.decode("utf-8")
+    except Exception as e:
+        print(f"[{field_name}] CORRUPT UTF: raw={raw.hex()} error={e}")
+        return None
+
+    for c in s:
+        if ord(c) < 32 and c not in ("\n", "\r", "\t"):
+            print(f"[{field_name}] CORRUPT: control char in {s!r}")
+            return None
+
+    print(f"[{field_name}] value={s!r}")
+    return s
+
+
 def parse_line_v5(r):
-    # L <UTF line_type> <UTF group_type> <int scrap_id?> <int npts> <points>
-    line_type = r.read_utf("line_type_v5")
-    group = r.read_utf("group_v5")
-    scrap_id = r.read_int()
-    npts = r.read_int()
-    for _ in range(npts):
-        r.read_float()
-        r.read_float()
+    off = r.pos
+    tag_pos = off - 1  # where 'L' was
+    dump_context(r, f"v5 line tag at {tag_pos}")
+    try:
+        
+        # line_type = r.read_utf("line_type_v5")
+        # group = r.read_utf("group_v5")
+        line_type = safe_read_utf(r, "line_type_v5")
+        group     = safe_read_utf(r, "group_v5")
+        if line_type is None or group is None:
+            print(f"[v5 line] CORRUPT type/group at off={off}, skipping element")
+            return
+        
+        # scrap_id = r.read_int()
+        # npts = r.read_int()
+        scrap_id = read_int_be(r, "v5 scrap_id")
+        npts     = read_int_be(r, "v5 npts")
+
+        print(f"[v5 line] off={off} type={line_type!r} group={group!r} "
+              f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
+              
+        
+        expected_bytes = npts * 8
+        if npts < 0 or npts > 10000 or r.remaining() < expected_bytes:
+            print(f"[v5 line] CORRUPT: npts={npts}, expected_bytes={expected_bytes}, remaining={r.remaining()}")
+            # classify as corrupt geometry and bail out of this element
+            return
+
+        if r.remaining() < expected_bytes:
+            print(f"[v5 line] npts={npts} expected_bytes={expected_bytes} "
+                  f"remaining={r.remaining()} (inconsistent)")
+
+        for i in range(npts):
+            if r.remaining() < 8:
+                print(f"[v5 line] EOF risk before point {i}, remaining={r.remaining()}")
+                break
+            x = r.read_float()
+            y = r.read_float()
+    except Exception as e:
+        print(f"[v5 line ERROR] off={off} pos={r.pos} remaining={r.remaining()} "
+              f"error={e}")
+        dump_context(r, "v5 line ERROR")
+        raise
+
 
 def parse_point_v5(r):
     # P <UTF point_type> <UTF group_type> <int scrap_id?> <float x> <float y>
-    point_type = r.read_utf("point_type_v5")
-    group = r.read_utf("group_v5")
+    off = r.pos
+    tag_pos = off - 1
+    dump_context(r, f"v5 point tag at {tag_pos}")
+
+    point_type = safe_read_utf(r, "point_type_v5")
+    group      = safe_read_utf(r, "group_v5")
+    if point_type is None or group is None:
+        print(f"[v5 point] CORRUPT type/group at off={off}, skipping element")
+        return
+
+    scrap_id = read_int_be(r, "v5 scrap_id")
+    print(f"[v5 point] off={off} type={point_type!r} group={group!r} "
+          f"scrap_id={scrap_id} remaining={r.remaining()}")
+
+    if r.remaining() < 8:
+        print(f"[v5 point] CORRUPT: not enough bytes for coords, remaining={r.remaining()}")
+        return
+        
+    # point_type = r.read_utf("point_type_v5")
+    # group = r.read_utf("group_v5")
     scrap_id = r.read_int()
     r.read_float()
     r.read_float()
 
 def parse_area_v5(r):
     # A <UTF area_type> <UTF group_type> <int scrap_id?> <int npts> <points>
-    area_type = r.read_utf("area_type_v5")
-    group = r.read_utf("group_v5")
-    scrap_id = r.read_int()
-    npts = r.read_int()
-    for _ in range(npts):
-        r.read_float()
-        r.read_float()
+    off = r.pos
+    tag_pos = off - 1
+    dump_context(r, f"v5 area tag at {tag_pos}")
+
+    area_type = safe_read_utf(r, "area_type_v5")
+    group     = safe_read_utf(r, "group_v5")
+    if area_type is None or group is None:
+        print(f"[v5 area] CORRUPT type/group at off={off}, skipping element")
+        return
+
+    scrap_id = read_int_be(r, "v5 scrap_id")
+    npts     = read_int_be(r, "v5 npts")
+
+    print(f"[v5 area] off={off} type={area_type!r} group={group!r} "
+          f"scrap_id={scrap_id} npts={npts} remaining={r.remaining()}")
+
+    expected_bytes = npts * 8
+    if npts < 0 or npts > 10000 or r.remaining() < expected_bytes:
+        print(f"[v5 area] CORRUPT: npts={npts}, expected_bytes={expected_bytes}, remaining={r.remaining()}")
+        return
+
+    for i in range(npts):
+        if r.remaining() < 8:
+            print(f"[v5 area] EOF risk before point {i}, remaining={r.remaining()}")
+            break
+        x = r.read_float()
+        y = r.read_float()
         
 def skip_v6_geometry(r):
     """
@@ -634,9 +783,9 @@ def parse_header(r, header_fmt):
     TD6/v5 hybrid uses v5 header.
     """
         # Detect format BEFORE reading layer/wall/water/BBox
-    print("Detector peek byte:", hex(r.peek_byte()))
-    print("Detector peek char:", repr(chr(r.peek_byte())))
-    print("Detector pos:", r.pos)
+    # print("Detector peek byte:", hex(r.peek_byte()))
+    # print("Detector peek char:", repr(chr(r.peek_byte())))
+    # print("Detector pos:", r.pos)
 
     if header_fmt == "v6_cstring_header":
         return parse_header_v6_cstring(r)
@@ -891,10 +1040,13 @@ def parse_elements(r, element_fmt):
 
     # --- v5 UTF --------------------------------------------------------------
     if element_fmt == "v5":
+        debug_v5_tags(r, limit=10)
         while r.remaining() > 0:
             tag = chr(r.read_byte())
+            print(f"[v5 tag]tag={tag!r} remaining={r.remaining()}")
 
             if tag in ('E','e'):
+                print("[v5] End tag encountered")
                 break
             if tag in ('N','n'):
                 parse_note_v5(r); continue
@@ -904,7 +1056,6 @@ def parse_elements(r, element_fmt):
                 parse_point_v5(r); points += 1; continue
             if tag in ('A','a'):
                 parse_area_v5(r); areas += 1; continue
-
             tag_counts[tag] += 1
             unknown += 1
 
