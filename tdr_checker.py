@@ -361,10 +361,10 @@ class Reader:
         
 def dispatch_by_version(version):
     if version == 602012:
-        return ("v5_cstring_header", "v6")
+        return ("v6_cstring_header", "v6")
 
     if version == 602011:
-        return ("v5_length_header", "v6")
+        return ("v6_length_header", "v6")
 
     if version == 501040:
         return ("v5_length_header2", "v5")
@@ -377,7 +377,6 @@ def dispatch_by_version(version):
 
     if version == 301004:
         return ("v3_header", "v3_utf")
-
 
     if version == 301040:
         return ("v3_header", "v3")
@@ -500,7 +499,7 @@ def read_len_string(r):
     r.pos += length
     return s.decode("ascii", errors="ignore")
 
-def parse_header_v5_length(r):
+def parse_header_v6_length(r):
     layer = read_len_string(r)
     wall  = read_len_string(r)
     water = read_len_string(r)
@@ -535,7 +534,7 @@ def parse_header_v5_length(r):
         "bbox": (x1, y1, x2, y2),
     }
 
-def parse_header_v5_cstring(r):
+def parse_header_v6_cstring(r):
     layer = r.read_cstring("layer")
     wall  = r.read_cstring("wall")
     water = r.read_cstring("water")
@@ -639,11 +638,11 @@ def parse_header(r, header_fmt):
     print("Detector peek char:", repr(chr(r.peek_byte())))
     print("Detector pos:", r.pos)
 
-    if header_fmt == "v5_cstring_header":
-        return parse_header_v5_cstring(r)
+    if header_fmt == "v6_cstring_header":
+        return parse_header_v6_cstring(r)
 
-    if header_fmt == "v5_length_header":
-        return parse_header_v5_length(r)
+    if header_fmt == "v6_length_header":
+        return parse_header_v6_length(r)
 
     if header_fmt == "v5_length_header2":
         return parse_header_v5_len(r)
