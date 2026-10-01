@@ -537,22 +537,17 @@ def parse_area_v5_plus(r):
     return area_type, area_group, scrap_id, npts
 
 def parse_note_v5_plus(r):
+    # Same as v5: two length-prefixed UTF-8 strings, no coords
     off = r.pos
-
-    note_type  = read_len_string_ascii_le(r, "note_type_v5+")
-    note_group = read_len_string_ascii_le(r, "note_group_v5+")
-    note_text  = read_len_string_ascii_le(r, "note_text_v5+")
-
-    if r.remaining() < 8:
-        raise ValueError("CORRUPT v5+ note: missing coordinates")
-
-    x = r.read_float()
-    y = r.read_float()
+    note_type  = read_len_string_ascii(r, "note_type_v5+")
+    note_group = read_len_string_ascii(r, "note_group_v5+")
+    note_text  = read_len_string_ascii(r, "note_text_v5+")
 
     print(f"[v5+ note] off={off} type={note_type!r} group={note_group!r} "
-          f"text={note_text!r} x={x} y={y} remaining={r.remaining()}")
+          f"text={note_text!r} remaining={r.remaining()}")
 
-    return note_type, note_group, note_text, x, y
+    return note_type, note_group, note_text
+
 
 
 def parse_elements_v5_plus(r, stats):
