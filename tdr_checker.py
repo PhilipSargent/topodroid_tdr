@@ -257,10 +257,10 @@ class Reader:
 # ------------------------------------------------------------
 def dispatch_by_version(version):
     if version == 602012:
-        return ("v6_cstring_header", "v6")
+        return ("v6_cstring_header", "v5")
 
     if version == 602011:
-        return ("v6_length_header", "v6")
+        return ("v6_length_header", "v5")
 
     if version == 501040:
         return ("v5_length_header2", "v6_binary_only")
@@ -689,6 +689,8 @@ def check_tdr(path):
         print(f"  Corrupt v5 Lines:   {stats['corrupt_lines_v5']}")
         print(f"  Corrupt v5 Points:  {stats['corrupt_points_v5']}")
         print(f"  Corrupt v5 Areas:   {stats['corrupt_areas_v5']}")
+        
+        print(f"  Corrupt v6 Lines:   {stats.get('corrupt_lines_v6', 0)}")
         
     except Exception as e:
         print(f"ERROR: {version} {e}")

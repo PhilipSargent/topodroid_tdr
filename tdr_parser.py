@@ -181,6 +181,7 @@ def parse_elements(r, element_fmt, stats):
         
     # --- v6 BINARY -----------------------------------------------------------
     if element_fmt == "v6":
+        print(f"[v6 geom preamble] pos={r.pos} next32={r.data[r.pos:r.pos+32].hex()}")
         while r.remaining() > 0:
             try:
                 before = r.pos
@@ -196,8 +197,16 @@ def parse_elements(r, element_fmt, stats):
                 print(f"[v6 tag] tag={tag!r} tag_pos={tag_pos} remaining={r.remaining()}")
 
                 if tag in ('L','l'):
-                    parse_line_v6(r)
-                    lines += 1; stats["lines"] += 1; continue
+                    try:
+                        parse_line_v6(r)
+                        lines += 1
+                        stats["lines"] += 1
+                    except EOFError as e:
+                        print(f"[v6 line ERROR] pos={r.pos} remaining={r.remaining()} error={e}")
+                        stats.setdefault("corrupt_lines_v6", 0)
+                        stats["corrupt_lines_v6"] += 1
+                    continue
+
                 if tag in ('P','p'):
                     parse_point_v6(r)
                     points += 1; stats["points"] += 1; continue
@@ -679,11 +688,16 @@ def skip_v6_layer_block(r):
     r.pos += block_len
 
 def skip_v6_geometry(r):
+    start = r.pos
     while r.remaining() > 0:
         b = r.peek_byte()
         if (65 <= b <= 90) or (97 <= b <= 122):
-            return
+            break
         r.read_byte()
+    if r.pos != start:
+        print(f"[v6 skip_geom] {start}->{r.pos} skipped={r.pos-start} "
+              f"next4={r.data[r.pos:r.pos+4].hex()}")
+
 
 def parse_line_v6(r):
     start = r.pos - 1  # L was just read
@@ -694,7 +708,13 @@ def parse_line_v6(r):
         raise EOFError("EOF reading npts_v6")
 
     raw_npts = r.data[r.pos:r.pos+2]
-    npts = struct.unpack(">H", raw_npts)[0]
+    npts_be = struct.unpack(">H", raw_npts)[0]
+    npts_le = struct.unpack("<H", raw_npts)[0]
+    print(f"[v6 line] start={start} type_code={type_code} group_code={group_code} "
+          f"raw_npts={raw_npts.hex()} npts_be={npts_be} npts_le={npts_le} "
+          f"remaining={r.remaining()}")
+
+    npts = npts_be  # or decide based on heuristic later
     r.pos += 2
 
     print(f"[v6 line] start={start} type_code={type_code} group_code={group_code} "
@@ -711,7 +731,6 @@ def parse_line_v6(r):
             break
         x = r.read_float()
         y = r.read_float()
-
 
 def parse_point_v6(r):
     start = r.pos - 1
