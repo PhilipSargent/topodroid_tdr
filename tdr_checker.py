@@ -111,7 +111,151 @@ def load_manifest(path: Path):
         "survey_name": survey_name,
         "date": date,
     }
+# ------------------------------------------------------------
+# Safe binary reader
+# ------------------------------------------------------------
 
+class Reader:
+    def __init__(self, data):
+        self.data = data
+        self.pos = 0
+        
+    def read_int_le(self):
+        if self.remaining() < 4:
+            raise EOFError("EOF reading int_le")
+        v = struct.unpack("<i", self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return v
+        
+    def read_cstring(self, field_name):
+        # print(f"\n[{field_name}] ENTER read_cstring: pos={self.pos}")
+        # print(f"[{field_name}] id(self.data)={id(self.data)} id(self)={id(self)}")
+
+
+        start = self.pos
+
+        # Walk until null
+        while self.remaining() > 0 and self.data[self.pos] != 0x00:
+            self.pos += 1
+
+        # print(f"[{field_name}] after scan: start={start}, end={self.pos}, "
+              # f"byte_at_end=0x{self.data[self.pos]:02x} "
+              # f"(remaining={self.remaining()})")
+
+        if self.remaining() == 0:
+            raise EOFError(f"EOF reading cstring for {field_name}")
+
+        raw = self.data[start:self.pos]
+        # print(f"[{field_name}] raw bytes: {raw.hex()}")
+
+        # Skip exactly one null terminator
+        # print(f"[{field_name}] skipping null at pos={self.pos}")
+        self.pos += 1
+        # print(f"[{field_name}] EXIT read_cstring: new pos={self.pos}")
+
+        try:
+            s = raw.decode("utf-8")
+            # print(f"[{field_name}] decoded: {s!r}")
+            return s
+        except Exception:
+            raise ValueError(f"CORRUPT HEADER: invalid C-string in {field_name}")
+
+
+
+    def remaining(self):
+        return len(self.data) - self.pos
+
+    def read_byte(self):
+        if self.remaining() < 1:
+            raise EOFError("EOF reading byte")
+        b = self.data[self.pos]
+        self.pos += 1
+        return b
+
+    def read_int(self):
+        if self.remaining() < 4:
+            raise EOFError("EOF reading int")
+        v = struct.unpack(">i", self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return v
+        
+    def read_float(self):
+        if self.remaining() < 4:
+            raise EOFError("EOF reading float")
+        val = struct.unpack(">f", self.data[self.pos:self.pos+4])[0]
+        self.pos += 4
+        return val
+
+    def peek_byte(self, offset=0):
+        """Return the byte at current position + offset without advancing."""
+        idx = self.pos + offset
+        if idx < 0 or idx >= len(self.data):
+            raise EOFError("EOF in peek_byte")
+        return self.data[idx]
+
+    def read_utf(self, field_name):
+        if self.remaining() < 2:
+            raise EOFError(f"EOF reading UTF length for {field_name}")
+
+        length = struct.unpack(">H", self.data[self.pos:self.pos+2])[0]
+        self.pos += 2
+
+        if self.remaining() < length:
+            raise EOFError(f"EOF reading UTF bytes for {field_name}")
+
+        raw = self.data[self.pos:self.pos+length]
+        self.pos += length
+
+        try:
+            s = raw.decode("utf-8")
+        except Exception:
+            raise ValueError(f"CORRUPT HEADER: invalid UTF in {field_name}")
+
+        # Reject control chars
+        for c in s:
+            if ord(c) < 32 and c not in ("\n", "\r", "\t"):
+                raise ValueError(f"CORRUPT HEADER: control chars in {field_name}")
+
+        return s
+   
+# ------------------------------------------------------------
+# Dispatch
+# ------------------------------------------------------------
+def dispatch_by_version(version):
+    if version == 602012:
+        return ("v6_cstring_header", "v6")
+
+    if version == 602011:
+        return ("v6_length_header", "v6")
+
+    if version == 501040:
+        return ("v5_length_header2", "v5")
+        
+    if version == 401092 or version == 400020 :
+        return ("v4_header", "v4")
+ 
+    if version == 301040:
+        return ("v3_header", "v3_binary")
+
+    if version == 301004:
+        return ("v3_header", "v3_utf")
+
+    if version == 301040:
+        return ("v3_header", "v3")
+
+    raise ValueError(f"Unsupported TD version {version}")
+
+# ------------------------------------------------------------
+# Directory scanner (pathlib version)
+# ------------------------------------------------------------
+
+def scan_directory(root: Path):
+    print(f"Scanning directory: {root}")
+
+    for path in root.rglob("*.tdr"):
+        print("\n----------------------------------------")
+        check_tdr(path)
+        print("----------------------------------------")
 
 # ------------------------------------------------------------
 # Main checker
