@@ -21,7 +21,21 @@ https://expo.survex.com/paperless#topodroid .
 This is not a port or conversion from the Topodroid source code, this is a new implementation working
 directly from hexdumps of the tdr files, inspired by what we generally know about what the files contain 
 and what topodroid does. It builds on understanding of completed similar work with SexyTopo 
-(which is a much cleaner system where vector data is all in JSON, like its centreline data). 
+(which is a much cleaner system where vector data is all in JSON, like its centreline data). It does
+not attempt to cover all Topodroid versions: we are only concerned with our own archived data. 
+These are the 133 TDR files in our archive with version number and number of TDR files at that version:
+|Version |No. of files|
+|--------|--------|
+|501040 |13|
+|602012 |2|
+|602011 |2|
+|400020 |3|
+|301040 |104|
+|401092 |9|
+
+(The most recent surveys in 2026 use version 501040 i.e. 5.1.40, because Frank's phone can't upgrade to a more recent version of Topodroid.) 
+This is not the final word on the versions in use as we have some survey trips identified as paperless but where we do not yet
+have the original source data uploaded to troggle: https://expo.survex.com/paperless#missing .
 
 The Troggle code is all available at https://expo.survex.com/repositories/troggle/.git/ under the MIT
 license. A good starting point which imports all the bits is https://expo.survex.com/repositories/troggle/.git/tree/core/views/topodroid.py .
