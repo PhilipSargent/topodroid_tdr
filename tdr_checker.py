@@ -307,8 +307,13 @@ def dispatch_by_version(version):
 
     if version == 501040:
         return ("v5_length_header2", "v6_binary_only")
-        
-    if version == 401092 or version == 400020 :
+
+    # HYBRID V4/V5/V6 SCRAP GEOMETRY PACKET FORMATS
+    if version in (400020, 401092):
+        return ("v4_header", "sgp")
+
+    # TRUE V4
+    if version == 400001:
         return ("v4_header", "v4")
  
     if version == 301040:
